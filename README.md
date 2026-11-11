@@ -41,6 +41,19 @@ python -m venv --system-site-packages .venv
 - `thumbs/`：缩略图缓存（设置页可清）
 - `logs/fell.log`：运行日志（1 MiB × 3 轮转；设置页「日志」可打开文件或目录）
 
+## 打包（Windows）
+
+```bash
+.venv/Scripts/python.exe -m pip install -r requirements-build.txt   # 仅首次
+build.bat
+```
+
+- 用 PyInstaller 6.x + `fell.spec` 构建 **onedir** 产物：`dist/Fell/Fell.exe`，整个 `dist/Fell/` 目录压缩即可分发。
+- `fell.spec` 会收齐 qfluentwidgets / qframelesswindow / rapidocr（含模型）/ onnxruntime / av / cv2，
+  并排除 transformers、torch 等运行时不用的大家伙。
+- OCR 跑在子进程里，`main.py` 已调用 `multiprocessing.freeze_support()`；打包后子进程以 `Fell.exe` 自身拉起。
+- exe 的设置、数据库、日志仍写在 `%APPDATA%/Fell/`，与源码运行共用。
+
 ## 快捷键（与界面控件一一对应）
 
 | 快捷键 | 动作 | 界面控件 |

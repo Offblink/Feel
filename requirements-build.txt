@@ -1,0 +1,2 @@
+# 仅打包用（运行时不依赖）：PyInstaller 6.x 打 onedir 包
+pyinstaller>=6.17,<7

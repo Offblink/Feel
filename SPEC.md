@@ -124,7 +124,8 @@ mp4 是最常见的视频格式，实测直接 InvalidMedia；wmfengine 插件�
   **入口在设置页「日志」组**：打开日志文件 / 打开日志目录。
 
 ### 非目标（本期不做）
-- 在线流媒体/URL 播放；字幕轨切换与编辑；幻灯片自动播放；图片编辑（裁剪/滤镜/涂鸦）；缩放状态跨会话持久化（缩放仍为会话内）；播放队列跨目录持久化；HEIC/HEIF（需额外解码库，列为后续）；多语言 i18n（UI 中文）；打包分发（exe）。
+- 在线流媒体/URL 播放；字幕轨切换与编辑；幻灯片自动播放；图片编辑（裁剪/滤镜/涂鸦）；缩放状态跨会话持久化（缩放仍为会话内）；播放队列跨目录持久化；HEIC/HEIF（需额外解码库，列为后续）；多语言 i18n（UI 中文）。
+- 安装包 / 自动更新：只提供 PyInstaller onedir 打包（`build.bat` → `dist/Fell/`），不做 MSI、不接更新源。
 
 ## 5. 交互设计
 
@@ -413,6 +414,15 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
   改为 `_tinted_pixmap()`（SourceIn 染色）：深色半透明圆底 + 浅色笔 / 浅红垃圾桶，两个主题都清晰。
 - 验证：`tools/smoke_phase13.py`（视频/图片/扩展名/收藏筛选后的队列、Ctrl+→ 在子集内切、排序决定队列顺序、
   资料库不被筛选队列替换、弹层显示时按钮滚轮/弹层滚轮、深色卡片图标像素亮度断言）；phase1–13 全绿。
+
+**2026-11-11 第十轮（发布准备，已完成）**：
+- 仓库推到 GitHub `Offblink/Fell`（公开，topics 已加）；`.gitignore` 排除 `build/`、`dist/`。
+- PyInstaller 打包：`fell.spec`（onedir，`collect_all` 覆盖 qfluentwidgets / qframelesswindow /
+  rapidocr_onnxruntime / onnxruntime / av / cv2，排除 transformers/torch 等大件；本机 site-packages 同时有
+  全局 PyQt5 与 PySide6，PyInstaller 会拒绝双 binding，spec 里显式排除 PyQt5/PyQt6/PySide2）、
+  `build.bat` 一键构建；`main.py` 在 `__main__` 里调用 `multiprocessing.freeze_support()`（OCR 子进程以
+  exe 自身重新拉起，不调用会把整个应用再跑一遍）。
+- 产物 `dist/Fell/Fell.exe` 可直接运行，配置/数据库/日志仍在 `%APPDATA%/Fell/`；未发 Release。
 
 ## 9. 风险与缓解
 

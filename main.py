@@ -40,4 +40,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == '__main__':
+    import multiprocessing
+
+    # 打包成 exe 后 OCR 的 ProcessPoolExecutor 会以本 exe 重新拉起子进程；
+    # 不调用 freeze_support() 会把整个应用再跑一遍（表现为闪出多个窗口）。
+    multiprocessing.freeze_support()
     sys.exit(main())
