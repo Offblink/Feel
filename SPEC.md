@@ -424,6 +424,14 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
   exe 自身重新拉起，不调用会把整个应用再跑一遍）。
 - 产物 `dist/Feel/Feel.exe` 可直接运行，配置/数据库/日志仍在 `%APPDATA%/Feel/`；未发 Release。
 
+**2026-11-11 第十一轮（更名 Feel + 图标，已完成）**：
+- 项目名更正为 **Feel**（原误拼 Fell）：Python 包 `fell/` → `feel/`、`FellWindow/FellConfig` → `FeelWindow/FeelConfig`、
+  `APP_NAME='Feel'`、数据目录 `%APPDATA%/Feel`（`feel.db`/`feel.log`，已从旧目录迁移）、`FELL_LAUNCH_DIR` → `FEEL_LAUNCH_DIR`、
+  `fell.spec` → `feel.spec`；本地目录与 GitHub 仓库同步改名（`Offblink/Feel`，旧 URL 重定向）。
+- 应用图标：心形（Feel = 感受）+ 镂空播放符（媒体）的青绿渐变瓷砖；`tools/make_icon.py` 生成
+  `assets/app.png`（1024）与 `assets/app.ico`（16–256 九档）；`main.py` 用 `setWindowIcon`（冻结后读 `sys._MEIPASS/assets`），
+  `feel.spec` 的 `EXE(icon=...)` 嵌入 exe 图标，并把 ICO 作为 datas 打包。
+
 ## 9. 风险与缓解
 
 | 风险 | 影响 | 缓解 |

@@ -6,13 +6,21 @@
 支持 Windows「打开方式」把文件路径作为第一个参数传进来（run.bat 已转发 %*）。
 """
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from feel import logs
 from feel.app import FeelWindow
 from feel.cli import find_open_target
+
+
+def icon_path() -> Path:
+    """assets/app.ico；冻结后在 sys._MEIPASS（onedir 的 _internal）里。"""
+    base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+    return base / 'assets' / 'app.ico'
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -25,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
         app = QApplication(argv)
         app.setApplicationName('Feel')
         app.setApplicationDisplayName('Feel')
+        app.setWindowIcon(QIcon(str(icon_path())))
+        log.info('窗口图标：%s', icon_path())
 
         window = FeelWindow()
         window.show()

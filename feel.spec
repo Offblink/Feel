@@ -30,6 +30,9 @@ hiddenimports += [
     'PySide6.QtMultimediaWidgets',
 ]
 
+# 窗口/任务栏图标（Qt 运行时读 _MEIPASS/assets/app.ico）
+datas += [('assets/app.ico', 'assets')]
+
 a = Analysis(
     ['main.py'],
     pathex=[],
@@ -68,6 +71,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='Feel',
+    icon='assets/app.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

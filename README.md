@@ -50,7 +50,8 @@ build.bat
 
 - 用 PyInstaller 6.x + `feel.spec` 构建 **onedir** 产物：`dist/Feel/Feel.exe`，整个 `dist/Feel/` 目录压缩即可分发。
 - `feel.spec` 会收齐 qfluentwidgets / qframelesswindow / rapidocr（含模型）/ onnxruntime / av / cv2，
-  并排除 transformers、torch 等运行时不用的大家伙。
+  并排除 transformers、torch 等运行时不用的大家伙；exe/窗口图标用 `assets/app.ico`（心形 + 镂空播放符，
+  源图 `assets/app.png`，可改 `tools/make_icon.py` 重生成）。
 - OCR 跑在子进程里，`main.py` 已调用 `multiprocessing.freeze_support()`；打包后子进程以 `Feel.exe` 自身拉起。
 - exe 的设置、数据库、日志仍写在 `%APPDATA%/Feel/`，与源码运行共用。
 
