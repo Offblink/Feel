@@ -1,0 +1,4 @@
+# 运行环境：venv 用 --system-site-packages 复用全局 PySide6 6.10.2 / cv2 / av / rapidocr / PIL
+PySide6-Fluent-Widgets==1.11.3
+PySideSix-Frameless-Window==0.8.2
+darkdetect==0.8.0
