@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fell.scanner import natural_key, media_kind, scan_directory  # noqa: E402
+from feel.scanner import natural_key, media_kind, scan_directory  # noqa: E402
 
 
 class ScannerTest(unittest.TestCase):

@@ -1,4 +1,4 @@
-# Fell
+# Feel
 
 本地音视频 / 图片查看器（PySide6 + PySide6-Fluent-Widgets）。打开一个文件，自动加载同目录的
 图片 / 音频 / 视频，支持播放（含倍速）、缩放旋转与放大拖动、名称/时间排序、shelf 卡片墙、
@@ -21,7 +21,7 @@ run.bat "D:\照片\a.jpg"
 run.bat "D:\照片"            :: 目录 → 打开按当前排序的第一项
 ```
 
-`run.bat` 会把参数原样转发给 `main.py`（`FELL_LAUNCH_DIR` 保留你调用时的目录，
+`run.bat` 会把参数原样转发给 `main.py`（`FEEL_LAUNCH_DIR` 保留你调用时的目录，
 相对路径按它解析）。
 
 手动安装：
@@ -35,11 +35,11 @@ python -m venv --system-site-packages .venv
 .venv/Scripts/python.exe main.py
 ```
 
-数据目录：`%APPDATA%/Fell/`
+数据目录：`%APPDATA%/Feel/`
 - `config.json`：设置（快进秒数、音量步长、播放模式、倍速、资料库排序、主题、图片搜索开关、直接删除开关）
-- `fell.db`：OCR 缓存、收藏、书签
+- `feel.db`：OCR 缓存、收藏、书签
 - `thumbs/`：缩略图缓存（设置页可清）
-- `logs/fell.log`：运行日志（1 MiB × 3 轮转；设置页「日志」可打开文件或目录）
+- `logs/feel.log`：运行日志（1 MiB × 3 轮转；设置页「日志」可打开文件或目录）
 
 ## 打包（Windows）
 
@@ -48,11 +48,11 @@ python -m venv --system-site-packages .venv
 build.bat
 ```
 
-- 用 PyInstaller 6.x + `fell.spec` 构建 **onedir** 产物：`dist/Fell/Fell.exe`，整个 `dist/Fell/` 目录压缩即可分发。
-- `fell.spec` 会收齐 qfluentwidgets / qframelesswindow / rapidocr（含模型）/ onnxruntime / av / cv2，
+- 用 PyInstaller 6.x + `feel.spec` 构建 **onedir** 产物：`dist/Feel/Feel.exe`，整个 `dist/Feel/` 目录压缩即可分发。
+- `feel.spec` 会收齐 qfluentwidgets / qframelesswindow / rapidocr（含模型）/ onnxruntime / av / cv2，
   并排除 transformers、torch 等运行时不用的大家伙。
-- OCR 跑在子进程里，`main.py` 已调用 `multiprocessing.freeze_support()`；打包后子进程以 `Fell.exe` 自身拉起。
-- exe 的设置、数据库、日志仍写在 `%APPDATA%/Fell/`，与源码运行共用。
+- OCR 跑在子进程里，`main.py` 已调用 `multiprocessing.freeze_support()`；打包后子进程以 `Feel.exe` 自身拉起。
+- exe 的设置、数据库、日志仍写在 `%APPDATA%/Feel/`，与源码运行共用。
 
 ## 快捷键（与界面控件一一对应）
 
@@ -104,7 +104,7 @@ build.bat
 
 ## 日志
 
-运行日志在 `%APPDATA%/Fell/logs/fell.log`（UTF-8，1 MiB × 3 轮转）。启动、命令、打开文件/文件夹、
+运行日志在 `%APPDATA%/Feel/logs/feel.log`（UTF-8，1 MiB × 3 轮转）。启动、命令、打开文件/文件夹、
 刷新、改名、删除、主题、播放失败、OCR 生命周期都会记录；`sys.excepthook` / `threading.excepthook`
 与 Qt 消息（warning 及以上）也会写进去。设置页「日志」组可直接**打开日志**或**打开日志目录**。
 
@@ -130,9 +130,9 @@ OCR 在后台静默运行：结果逐张写入 sqlite；关掉应用中断后，
 .venv/Scripts/python.exe tools/smoke_phase13.py                 # 筛选决定播放队列/音量滚轮/深色卡片图标
 ```
 
-`tools/gen_test_media.py` 可生成测试媒体；冒烟截图落在 `C:/tmp/scratch/fell-phase*/`。
-冒烟脚本把自己的 `APPDATA` 指向 `C:/tmp/scratch/fell-phaseN/appdata`，不会改动用户的
-`%APPDATA%/Fell/config.json` 与 `fell.db`。
+`tools/gen_test_media.py` 可生成测试媒体；冒烟截图落在 `C:/tmp/scratch/feel-phase*/`。
+冒烟脚本把自己的 `APPDATA` 指向 `C:/tmp/scratch/feel-phaseN/appdata`，不会改动用户的
+`%APPDATA%/Feel/config.json` 与 `feel.db`。
 
 ## 已知限制
 

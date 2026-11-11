@@ -1,4 +1,4 @@
-"""Fell 主窗口：FluentWindow + 三页导航 + 动作注册（SPEC §5.1 / FR-16）。"""
+"""Feel 主窗口：FluentWindow + 三页导航 + 动作注册（SPEC §5.1 / FR-16）。"""
 from __future__ import annotations
 
 import os
@@ -33,12 +33,12 @@ PAGE_CONTEXT = {}
 log = logger()
 
 
-class FellWindow(FluentWindow):
-    """Fell 主窗口。"""
+class FeelWindow(FluentWindow):
+    """Feel 主窗口。"""
 
     def __init__(self):
         super().__init__()
-        self.setObjectName('FellWindow')
+        self.setObjectName('FeelWindow')
         self.setWindowTitle('未打开文件')
         self.resize(1180, 780)
 

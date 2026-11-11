@@ -1,7 +1,7 @@
-# Fell — 音视频/图片查看器 Spec v0.1（待核对）
+# Feel — 音视频/图片查看器 Spec v0.1（待核对）
 
 > 状态：**已核对通过（2026-11-11）**，按 §8 增量开发中。
-> 项目名：Fell。位置：`C:/Users/37549/Desktop/Vibe Coding/useful/Fell`。
+> 项目名：Feel。位置：`C:/Users/37549/Desktop/Vibe Coding/useful/Feel`。
 
 ## 1. 问题
 
@@ -111,21 +111,21 @@ mp4 是最常见的视频格式，实测直接 InvalidMedia；wmfengine 插件�
   千级目录分批建卡，期间显示加载动画；播放页解码/换源同样先出加载动画再执行；
   抽屉的播放列表只在抽屉打开时构建。
 - **FR-26 命令行 / 文件关联**：`main.py <文件或目录>`（`run.bat` 转发 `%*`）→ 文件直接打开；
-  目录打开按当前排序的第一项；相对路径按调用时的目录解析（`FELL_LAUNCH_DIR`）。
+  目录打开按当前排序的第一项；相对路径按调用时的目录解析（`FEEL_LAUNCH_DIR`）。
   可在 Windows「打开方式」里选 `run.bat`。
 - **FR-27 打开文件夹**：资料库顶栏「打开文件夹」按钮（Ctrl+Shift+O）→ 选目录后**只把该目录装进资料库与队列**：
   **不跳转到播放页、不自动播放**，点卡片才打开；空目录给提示，不改现有队列。
   大目录卡片分批建立且网格高度按行数撑开（`gridContainer` 最小高度），不会因视口高度把行压扁而重叠。
 - **FR-28 帮助页**：独立导航页（Ctrl+4），按场景列出**全部**快捷键（与 `ActionRegistry` 一致，
   冒烟自动核对）、使用要点与已知限制。
-- **FR-29 日志**：`%APPDATA%/Fell/logs/fell.log`（UTF-8，1 MiB × 3 轮转）。记录启动/命令行、
+- **FR-29 日志**：`%APPDATA%/Feel/logs/feel.log`（UTF-8，1 MiB × 3 轮转）。记录启动/命令行、
   打开文件与文件夹、刷新/排序、改名、删除、主题切换、播放失败、OCR 开始/完成/失败，
   并接管未捕获异常（主线程 + `threading.excepthook`）与 Qt 消息（warning 及以上）。
   **入口在设置页「日志」组**：打开日志文件 / 打开日志目录。
 
 ### 非目标（本期不做）
 - 在线流媒体/URL 播放；字幕轨切换与编辑；幻灯片自动播放；图片编辑（裁剪/滤镜/涂鸦）；缩放状态跨会话持久化（缩放仍为会话内）；播放队列跨目录持久化；HEIC/HEIF（需额外解码库，列为后续）；多语言 i18n（UI 中文）。
-- 安装包 / 自动更新：只提供 PyInstaller onedir 打包（`build.bat` → `dist/Fell/`），不做 MSI、不接更新源。
+- 安装包 / 自动更新：只提供 PyInstaller onedir 打包（`build.bat` → `dist/Feel/`），不做 MSI、不接更新源。
 
 ## 5. 交互设计
 
@@ -156,7 +156,7 @@ FluentWindow
 │   ├─ 界面：深浅主题图标按钮 ☀/☾(Ctrl+T)、主题渐变过渡
 │   ├─ 资料库：图片搜索开关（关则搜索框整体隐藏、不跑 OCR）、缩略图缓存清理
 │   ├─ 文件：直接删除开关（默认关；开=不弹确认直接进回收站）
-│   └─ 日志：运行日志卡片（打开日志 fell.log / 打开日志目录）
+│   └─ 日志：运行日志卡片（打开日志 feel.log / 打开日志目录）
 └─ 帮助页（使用说明书：分组快捷键表 + 使用要点 + 已知限制）
 ```
 
@@ -165,7 +165,7 @@ FluentWindow
 ### 5.2 缩略图与占位图
 
 - 图片：缩略图 = 等比缩放首帧；GIF 取首帧（查看时 `QMovie` 动播）。
-- 视频：取 `min(1s, 时长×10%)` 处一帧（PyAV），缓存于 `%APPDATA%/Fell/thumbs/`（键 = path+mtime hash），异步生成不卡网格。
+- 视频：取 `min(1s, 时长×10%)` 处一帧（PyAV），缓存于 `%APPDATA%/Feel/thumbs/`（键 = path+mtime hash），异步生成不卡网格。
 - 音频：内置固定占位图（音符插画，随主题两版色）。
 
 ### 5.3 快捷键 ↔ 可视化控件对照表（规范性，FR-16）
@@ -248,25 +248,25 @@ FluentWindow
 
 ## 6. 数据与持久化
 
-- 设置：qfluentwidgets `QConfig` → `%APPDATA%/Fell/config.json`（seekN、volumeV、默认模式、倍速、资料库排序、主题、图片搜索开关 `Library/OcrEnabled`、直接删除 `Files/DirectDelete`）。
+- 设置：qfluentwidgets `QConfig` → `%APPDATA%/Feel/config.json`（seekN、volumeV、默认模式、倍速、资料库排序、主题、图片搜索开关 `Library/OcrEnabled`、直接删除 `Files/DirectDelete`）。
 - 改名迁移：`Store.rename_path(old, new)` 同时改 `ocr_cache / favorites / bookmarks / rotation` 的 path，改名不清空收藏与书签。
-- 数据库：sqlite → `%APPDATA%/Fell/fell.db`
+- 数据库：sqlite → `%APPDATA%/Feel/feel.db`
   - `ocr_cache(path, mtime, size, text, updated_at)`
   - `favorites(path PK, created_at)`
   - `bookmarks(id, path, pos_ms, label, created_at, UNIQUE(path, pos_ms))`——同一位置再次保存更新 `label`
   - `rotation(path PK, degrees)`（旋转跨会话持久化）
-- 缩略图缓存：`%APPDATA%/Fell/thumbs/`（path+mtime hash 命名，设置页可清）。
-- 运行日志：`%APPDATA%/Fell/logs/fell.log`（+ `fell.log.1..3`，单份 1 MiB；设置页「日志」可直接打开文件/目录）。
+- 缩略图缓存：`%APPDATA%/Feel/thumbs/`（path+mtime hash 命名，设置页可清）。
+- 运行日志：`%APPDATA%/Feel/logs/feel.log`（+ `feel.log.1..3`，单份 1 MiB；设置页「日志」可直接打开文件/目录）。
 
 ## 7. 架构与模块
 
 ```
-Fell/
+Feel/
 ├─ main.py                 # 入口
 ├─ SPEC.md
 ├─ requirements.txt        # PySide6-Fluent-Widgets（其余复用全局）
 ├─ .venv/                  # --system-site-packages
-├─ fell/
+├─ feel/
 │  ├─ app.py               # QApplication / FluentWindow / 导航 / 主题过渡
 │  ├─ actions.py           # ActionRegistry：{id,名称,快捷键,图标,可用条件} 单一来源
 │  ├─ config.py            # QConfig
@@ -339,8 +339,8 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
   抽屉播放列表当前项改用「▶ + 加粗」而非 current 项配色（浅色主题下会被刷成白字不可见）；
   倍速按钮由 SplitPushButton 换成一体式 DropDownPushButton（短文本「1×」时两半看起来像两个按钮）。
 - 验证：单测 26 个；`tools/smoke_phase9.py` 新增（排序/倍速/方向键），phase4 增拖动断言，phase7 改书签输入框流程。
-  所有冒烟脚本把 `APPDATA` 指向 `C:/tmp/scratch/fell-phaseN/appdata`（在 import `fell.*` 之前），
-  不再写用户 `config.json` / `fell.db`；此前被冒烟改掉的设置已还原。
+  所有冒烟脚本把 `APPDATA` 指向 `C:/tmp/scratch/feel-phaseN/appdata`（在 import `feel.*` 之前），
+  不再写用户 `config.json` / `feel.db`；此前被冒烟改掉的设置已还原。
 
 **2026-11-11 第四轮（用户反馈，已完成）**：
 - 点视频画面 = 播放/暂停（双击仍是全屏；双击的第二次 release 由 dblclick 标记吃掉，避免翻两次状态）。首帧快照层设鼠标穿透。
@@ -353,9 +353,9 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
 - 资料库卡片宽度不再固定：`_grid_metrics()` 按视口宽度算列数（以 `CARD_W` 为基准），
   再按列均分可用宽度（余数逐列 +1px），行宽恰好等于视口宽度；`ShelfCard.set_card_width()` 只在绘制里用
   `self.width()`。窗口缩放实时重排。
-- 命令行/文件关联（FR-26）：`fell/cli.py::find_open_target` 取第一个存在的参数（忽略 `-*`、去引号、
-  相对路径按 `FELL_LAUNCH_DIR`）；`FellWindow.open_argument()` 文件直开 / 目录取排序首项；`run.bat` 导出
-  `FELL_LAUNCH_DIR` 并转发 `%*`。实测 `run.bat "<file>"` 启动的 pythonw 命令行里带该路径。
+- 命令行/文件关联（FR-26）：`feel/cli.py::find_open_target` 取第一个存在的参数（忽略 `-*`、去引号、
+  相对路径按 `FEEL_LAUNCH_DIR`）；`FeelWindow.open_argument()` 文件直开 / 目录取排序首项；`run.bat` 导出
+  `FEEL_LAUNCH_DIR` 并转发 `%*`。实测 `run.bat "<file>"` 启动的 pythonw 命令行里带该路径。
 - 验证：单测 32 个（新增 `tests/test_cli.py` 6 个）；phase9 增「行宽=视口宽、缩窗后列数减少、open_argument」。
 
 **2026-11-11 第六轮（用户反馈，已完成）**：
@@ -393,9 +393,9 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
   被压成 0 后所有卡片叠在一起（300 张卡挤进 619px，实测 4120 处重叠）。修法：`_relayout()` 按行数把内容高度
   写进 `gridContainer.setMinimumHeight()`（行数 × CARD_H + 间距 + 边距），并 `grid.invalidate()`；
   重建时页面被切走则记 `_pending_relayout`，`showEvent` 再排一次。
-- **"数个 Fell 子窗口"根因**：重建网格时对可见卡片直接 `setParent(None)` 会让它们短暂变成顶层窗口
+- **"数个 Feel 子窗口"根因**：重建网格时对可见卡片直接 `setParent(None)` 会让它们短暂变成顶层窗口
   （PySide 表现成闪出多个子窗口，大目录重建时叠加）。修法：先 `hide()` 再 `setParent(None)`；网格里的残留控件同样先 hide。
-- **日志系统（FR-29）**：新增 `fell/logs.py`——`logs/fell.log` 轮转文件日志；接管 `sys.excepthook`、
+- **日志系统（FR-29）**：新增 `feel/logs.py`——`logs/feel.log` 轮转文件日志；接管 `sys.excepthook`、
   `threading.excepthook` 与 Qt 消息；`main.py` 启动即初始化；记录启动/命令行、打开文件与文件夹、刷新、改名、
   删除、主题、播放失败、OCR 生命周期。设置页新增「日志」组（打开日志 / 打开目录）。
 - 验证：`tools/smoke_phase12.py`（120 张图打开文件夹：不跳页/不自动播放、0 重叠、容器最小高度、
@@ -404,7 +404,7 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
 
 **2026-11-11 第九轮（用户反馈，已完成）**：
 - **资料库筛选决定播放队列**：`PlayerPage` 拆成 `directory_entries`（整目录，资料库展示/OCR 用）与
-  `entries`（播放队列）。点卡片 / Enter / 双击时，`FellWindow.open_path` 用 `shelf.queue_for(path)`
+  `entries`（播放队列）。点卡片 / Enter / 双击时，`FeelWindow.open_path` 用 `shelf.queue_for(path)`
   取当前筛选结果（分类 ∩ 扩展名 ∩ 搜索，按当前排序）作队列；被筛掉的文件退回整目录。
   上一/下一、抽屉播放列表只在子集内走；`refresh` / 排序 / 改名 / 删除都按“旧队列成员”重建队列，不把筛选丢掉。
 - **音量滚轮**：`Qt.Popup` 会抢鼠标抓取，弹层弹出后滚轮落在音量按钮上会被重定向丢弃（只有弹层框里能滚）。
@@ -416,13 +416,13 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
   资料库不被筛选队列替换、弹层显示时按钮滚轮/弹层滚轮、深色卡片图标像素亮度断言）；phase1–13 全绿。
 
 **2026-11-11 第十轮（发布准备，已完成）**：
-- 仓库推到 GitHub `Offblink/Fell`（公开，topics 已加）；`.gitignore` 排除 `build/`、`dist/`。
-- PyInstaller 打包：`fell.spec`（onedir，`collect_all` 覆盖 qfluentwidgets / qframelesswindow /
+- 仓库推到 GitHub `Offblink/Feel`（公开，topics 已加）；`.gitignore` 排除 `build/`、`dist/`。
+- PyInstaller 打包：`feel.spec`（onedir，`collect_all` 覆盖 qfluentwidgets / qframelesswindow /
   rapidocr_onnxruntime / onnxruntime / av / cv2，排除 transformers/torch 等大件；本机 site-packages 同时有
   全局 PyQt5 与 PySide6，PyInstaller 会拒绝双 binding，spec 里显式排除 PyQt5/PyQt6/PySide2）、
   `build.bat` 一键构建；`main.py` 在 `__main__` 里调用 `multiprocessing.freeze_support()`（OCR 子进程以
   exe 自身重新拉起，不调用会把整个应用再跑一遍）。
-- 产物 `dist/Fell/Fell.exe` 可直接运行，配置/数据库/日志仍在 `%APPDATA%/Fell/`；未发 Release。
+- 产物 `dist/Feel/Feel.exe` 可直接运行，配置/数据库/日志仍在 `%APPDATA%/Feel/`；未发 Release。
 
 ## 9. 风险与缓解
 
@@ -439,7 +439,7 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
 
 ## 10. 核对决议（2026-11-11，已全部拍板）
 
-1. **项目位置**：`C:/Users/37549/Desktop/Vibe Coding/useful/Fell`（已落位）。
+1. **项目位置**：`C:/Users/37549/Desktop/Vibe Coding/useful/Feel`（已落位）。
 2. **FR-18 分类粒度**：类别大类 chips（全部/图片/视频/音频/收藏）+ 扩展名细分下拉。
 3. **FR-20 重命名**：仅单文件重命名（多选只做批量删除）。
 4. **FR-09 删除去向**：回收站 + 确认对话框。
@@ -447,7 +447,7 @@ Phase 1–8 全部完成并通过验收：22 个单测 + 8 个冒烟脚本（`to
 6. **资料库顶栏（2026-11-11 用户拍板）**：只保留「刷新」「选择」；重命名/删除改为卡片悬停按钮；
    选择模式内才显示「全选/删除/取消」。
 7. **悬停预览（2026-11-11 用户拍板）**：只显示视频帧，不显示时间码；音频不弹浮层（避免与进度点竞争）。
-8. **窗口标题（2026-11-11 用户拍板）**：不显示应用名「Fell」，只显示当前文件名。
+8. **窗口标题（2026-11-11 用户拍板）**：不显示应用名「Feel」，只显示当前文件名。
 9. **排序方式（2026-11-11 用户要求）**：名称 + 时间两种；时间按文件 mtime，默认新→旧，同秒用名称自然序稳序。
 10. **左右键（2026-11-11 用户拍板）**：`←` / `→` = 后退/前进 N 秒；`Ctrl+←` / `Ctrl+→` = 上/下一个文件。
 11. **图片拖拽（2026-11-11 用户要求）**：放大状态下按住左键拖动调整显示区域；不持久化平移位置。

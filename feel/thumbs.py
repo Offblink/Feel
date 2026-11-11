@@ -1,4 +1,4 @@
-"""缩略图服务：图片/视频取帧，后台生成并缓存到 %APPDATA%/Fell/thumbs（FR-21）。"""
+"""缩略图服务：图片/视频取帧，后台生成并缓存到 %APPDATA%/Feel/thumbs（FR-21）。"""
 from __future__ import annotations
 
 import hashlib

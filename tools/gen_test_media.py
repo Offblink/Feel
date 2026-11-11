@@ -61,7 +61,7 @@ def make_images(png: Path, jpg: Path) -> None:
     for x in range(640):
         draw.line([(x, 0), (x, 360)], fill=(30 + x // 8, 60, 120 - x // 12))
     draw.rectangle([40, 40, 600, 320], outline=(255, 255, 255), width=4)
-    draw.text((80, 160), 'Fell Test Image', fill=(255, 255, 0))
+    draw.text((80, 160), 'Feel Test Image', fill=(255, 255, 0))
     image.save(png)
     image.resize((320, 240)).save(jpg, quality=90)
 
@@ -77,5 +77,5 @@ def main(out_dir: str | Path) -> Path:
 
 
 if __name__ == '__main__':
-    target = main(sys.argv[1] if len(sys.argv) > 1 else 'C:/tmp/scratch/fell-phase2/media')
+    target = main(sys.argv[1] if len(sys.argv) > 1 else 'C:/tmp/scratch/feel-phase2/media')
     print('media generated at', target)

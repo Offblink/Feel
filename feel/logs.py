@@ -1,6 +1,6 @@
 """运行日志：轮转文件日志 + 未捕获异常 / Qt 消息捕获（入口在设置页「日志」）。
 
-- 文件：`%APPDATA%/Fell/logs/fell.log`（UTF-8，1 MiB × 3 份轮转）
+- 文件：`%APPDATA%/Feel/logs/feel.log`（UTF-8，1 MiB × 3 份轮转）
 - 捕获：主线程与工作线程的未捕获异常、Qt 消息（warning 及以上）
 - 启动即记录 pid / 命令行 / 日志路径，打包成 pythonw 无控制台时也能事后定位
 """
@@ -16,7 +16,7 @@ from pathlib import Path
 from .config import app_data_dir
 
 LOG_DIR: Path = app_data_dir() / 'logs'
-LOG_PATH: Path = LOG_DIR / 'fell.log'
+LOG_PATH: Path = LOG_DIR / 'feel.log'
 LOG_FORMAT = '%(asctime)s %(levelname)-7s [%(threadName)s] %(message)s'
 MAX_BYTES = 1024 * 1024
 BACKUP_COUNT = 3
@@ -26,7 +26,7 @@ _configured = False
 
 def logger() -> logging.Logger:
     """全应用唯一的 logger（未 setup 时也不会炸：只有 lastResort 输出）。"""
-    return logging.getLogger('fell')
+    return logging.getLogger('feel')
 
 
 def setup(level: int = logging.INFO) -> logging.Logger:
@@ -77,7 +77,7 @@ def setup(level: int = logging.INFO) -> logging.Logger:
     except Exception:  # noqa: BLE001 - 没有 Qt 时只留文件日志
         log.exception('安装 Qt 消息处理器失败')
 
-    log.info('==== Fell 启动 pid=%s ====', os.getpid())
+    log.info('==== Feel 启动 pid=%s ====', os.getpid())
     log.info('命令行：%s', ' '.join(sys.argv))
     log.info('日志文件：%s', LOG_PATH)
     return log
@@ -90,7 +90,7 @@ def open_log_folder() -> None:
 
 
 def open_log_file() -> None:
-    """用系统默认程序打开 fell.log（设置页按钮）。"""
+    """用系统默认程序打开 feel.log（设置页按钮）。"""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     if not LOG_PATH.exists():
         LOG_PATH.touch()

@@ -5,21 +5,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-# 冒烟会改 cfg（播放模式/OCR/排序）与 sqlite：隔离到 scratch，绝不写用户 %APPDATA%/Fell
+# 冒烟会改 cfg（播放模式/OCR/排序）与 sqlite：隔离到 scratch，绝不写用户 %APPDATA%/Feel
 import os  # noqa: E402
-os.environ['APPDATA'] = 'C:/tmp/scratch/fell-phase7/appdata'
+os.environ['APPDATA'] = 'C:/tmp/scratch/feel-phase7/appdata'
 
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from fell.app import FellWindow  # noqa: E402
-from fell.config import cfg  # noqa: E402
-from fell.store import Store  # noqa: E402
+from feel.app import FeelWindow  # noqa: E402
+from feel.config import cfg  # noqa: E402
+from feel.store import Store  # noqa: E402
 from tools.gen_test_media import main as gen_media  # noqa: E402
 
-OUT = Path('C:/tmp/scratch/fell-phase7')
+OUT = Path('C:/tmp/scratch/feel-phase7')
 MEDIA = OUT / 'media'
 
 
@@ -46,10 +46,10 @@ def main() -> int:
     if MEDIA.exists():
         shutil.rmtree(MEDIA)
     gen_media(MEDIA)
-    make_text_image(MEDIA / 'scan_a.png', 'FELL SCAN A')
+    make_text_image(MEDIA / 'scan_a.png', 'FEEL SCAN A')
 
     app = QApplication(sys.argv)
-    window = FellWindow()
+    window = FeelWindow()
     window.resize(1180, 780)
     window.show()
     window.setMicaEffectEnabled(False)
@@ -199,14 +199,14 @@ def main() -> int:
     window.open_path(MEDIA / 'scan_a.png')
     assert wait_for(lambda: not window.ocr.is_running, 90000)
     QTest.qWait(300)
-    assert 'FELL' in shelf.ocr_texts.get(MEDIA / 'scan_a.png', '').upper()
+    assert 'FEEL' in shelf.ocr_texts.get(MEDIA / 'scan_a.png', '').upper()
     window.store.delete_ocr(MEDIA / 'scan_a.png')
     shelf.ocr_texts.pop(MEDIA / 'scan_a.png', None)
     window._ocr_signature = None  # 模拟进程重启（新会话签名清空）
     window.open_path(MEDIA / 'scan_a.png')  # 重开同目录 → 续跑
     assert wait_for(lambda: not window.ocr.is_running, 90000)
     QTest.qWait(400)
-    assert 'FELL' in shelf.ocr_texts.get(MEDIA / 'scan_a.png', '').upper(), 'OCR 未续跑'
+    assert 'FEEL' in shelf.ocr_texts.get(MEDIA / 'scan_a.png', '').upper(), 'OCR 未续跑'
     print('ocr resume after simulated interruption OK')
 
     print('SMOKE PHASE7 OK')

@@ -1,6 +1,6 @@
 """Phase 9 冒烟：排序（名称/修改时间）、倍速、←/→ 上/下一个。
 
-配置与数据库都写到 C:/tmp/scratch/fell-phase9/appdata，不碰用户真实 cfg/fell.db。
+配置与数据库都写到 C:/tmp/scratch/feel-phase9/appdata，不碰用户真实 cfg/feel.db。
 """
 import os
 import shutil
@@ -10,18 +10,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-OUT = Path('C:/tmp/scratch/fell-phase9')
+OUT = Path('C:/tmp/scratch/feel-phase9')
 MEDIA = OUT / 'media'
 
-# 必须在 import fell.* 之前：config.py 在导入时就算出 CONFIG_PATH/DB_PATH
+# 必须在 import feel.* 之前：config.py 在导入时就算出 CONFIG_PATH/DB_PATH
 os.environ['APPDATA'] = str(OUT / 'appdata')
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from fell.app import FellWindow  # noqa: E402
-from fell.config import SORT_MODES, cfg  # noqa: E402
+from feel.app import FeelWindow  # noqa: E402
+from feel.config import SORT_MODES, cfg  # noqa: E402
 from tools.gen_test_media import main as gen_media  # noqa: E402
 
 MTIMES = {
@@ -54,7 +54,7 @@ def main() -> int:
     cfg.set(cfg.sortMode, 'name')
     cfg.save()
 
-    window = FellWindow()
+    window = FeelWindow()
     window.resize(1180, 780)
     window.show()
     window.setMicaEffectEnabled(False)

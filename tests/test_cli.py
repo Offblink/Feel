@@ -1,4 +1,4 @@
-"""启动参数解析单测（文件关联 / 用 Fell 打开）。"""
+"""启动参数解析单测（文件关联 / 用 Feel 打开）。"""
 import os
 import sys
 import tempfile
@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fell.cli import find_open_target  # noqa: E402
+from feel.cli import find_open_target  # noqa: E402
 
 
 class CliTest(unittest.TestCase):
@@ -16,13 +16,13 @@ class CliTest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.media = self.root / 'photo.png'
         self.media.write_bytes(b'x')
-        self._old_launch_dir = os.environ.get('FELL_LAUNCH_DIR')
+        self._old_launch_dir = os.environ.get('FEEL_LAUNCH_DIR')
 
     def tearDown(self):
         if self._old_launch_dir is None:
-            os.environ.pop('FELL_LAUNCH_DIR', None)
+            os.environ.pop('FEEL_LAUNCH_DIR', None)
         else:
-            os.environ['FELL_LAUNCH_DIR'] = self._old_launch_dir
+            os.environ['FEEL_LAUNCH_DIR'] = self._old_launch_dir
         self._tmp.cleanup()
 
     def test_first_existing_path_wins(self):
@@ -40,7 +40,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(find_open_target([f'"{self.media}"']), self.media)
 
     def test_relative_path_uses_launch_dir(self):
-        os.environ['FELL_LAUNCH_DIR'] = str(self.root)
+        os.environ['FEEL_LAUNCH_DIR'] = str(self.root)
         self.assertEqual(find_open_target(['photo.png']), self.media)
 
     def test_no_target_returns_none(self):

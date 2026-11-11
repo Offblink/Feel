@@ -1,6 +1,6 @@
 """Phase 11 冒烟：F 全屏 / E 收藏、点别处收起标题输入框、打开文件夹、帮助页。
 
-配置与数据库都写到 C:/tmp/scratch/fell-phase11/appdata，不碰用户真实 cfg/fell.db。
+配置与数据库都写到 C:/tmp/scratch/feel-phase11/appdata，不碰用户真实 cfg/feel.db。
 """
 import os
 import shutil
@@ -10,10 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-OUT = Path('C:/tmp/scratch/fell-phase11')
+OUT = Path('C:/tmp/scratch/feel-phase11')
 MEDIA = OUT / 'media'
 
-# 必须在 import fell.* 之前：config.py 在导入时就算出 CONFIG_PATH/DB_PATH
+# 必须在 import feel.* 之前：config.py 在导入时就算出 CONFIG_PATH/DB_PATH
 os.environ['APPDATA'] = str(OUT / 'appdata')
 
 from PySide6.QtCore import Qt  # noqa: E402
@@ -21,8 +21,8 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 import PySide6.QtWidgets as qt_widgets  # noqa: E402
-from fell.app import FellWindow  # noqa: E402
-from fell.config import cfg  # noqa: E402
+from feel.app import FeelWindow  # noqa: E402
+from feel.config import cfg  # noqa: E402
 from tools.gen_test_media import main as gen_media  # noqa: E402
 
 KEY_TOKEN = {'Left': '←', 'Right': '→', 'Up': '↑', 'Down': '↓'}
@@ -45,7 +45,7 @@ def main() -> int:
     cfg.set(cfg.sortMode, 'name')
     cfg.save()
 
-    window = FellWindow()
+    window = FeelWindow()
     window.resize(1180, 780)
     window.show()
     window.setMicaEffectEnabled(False)

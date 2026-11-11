@@ -1,6 +1,6 @@
 """Phase 13 冒烟：资料库筛选决定播放队列、音量滚轮（弹层抓鼠标）、深色卡片操作图标。
 
-配置与数据库都写到 C:/tmp/scratch/fell-phase13/appdata，不碰用户真实 cfg/fell.db。
+配置与数据库都写到 C:/tmp/scratch/feel-phase13/appdata，不碰用户真实 cfg/feel.db。
 """
 import os
 import shutil
@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-OUT = Path('C:/tmp/scratch/fell-phase13')
+OUT = Path('C:/tmp/scratch/feel-phase13')
 MEDIA = OUT / 'media'
 
 os.environ['APPDATA'] = str(OUT / 'appdata')
@@ -22,9 +22,9 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from qfluentwidgets import isDarkTheme  # noqa: E402
 
 import PySide6.QtWidgets as qt_widgets  # noqa: E402
-from fell.app import FellWindow  # noqa: E402
-from fell.config import cfg  # noqa: E402
-from fell.ui.widgets.shelf_card import ShelfCard  # noqa: E402
+from feel.app import FeelWindow  # noqa: E402
+from feel.config import cfg  # noqa: E402
+from feel.ui.widgets.shelf_card import ShelfCard  # noqa: E402
 from tools.gen_test_media import main as gen_media  # noqa: E402
 
 
@@ -52,7 +52,7 @@ def main() -> int:
     cfg.set(cfg.sortMode, 'name')
     cfg.save()
 
-    window = FellWindow()
+    window = FeelWindow()
     window.resize(1180, 780)
     window.show()
     window.setMicaEffectEnabled(False)

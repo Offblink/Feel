@@ -1,29 +1,29 @@
 """Phase 1 冒烟验收：三页截图 + 设置持久化 + 动作注册表不变量。
 
 用法（venv）：  .venv/Scripts/python.exe tools/smoke_phase1.py
-离屏模式：      FELL_OFFSCREEN=1 （无字体，仅验证逻辑）
-输出截图：      C:/tmp/scratch/fell-phase1/
+离屏模式：      FEEL_OFFSCREEN=1 （无字体，仅验证逻辑）
+输出截图：      C:/tmp/scratch/feel-phase1/
 """
 import os
 import sys
 from pathlib import Path
 
-if os.environ.get('FELL_OFFSCREEN') == '1':
+if os.environ.get('FEEL_OFFSCREEN') == '1':
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# 冒烟会改 cfg（播放模式/OCR/排序）与 sqlite：隔离到 scratch，绝不写用户 %APPDATA%/Fell
+# 冒烟会改 cfg（播放模式/OCR/排序）与 sqlite：隔离到 scratch，绝不写用户 %APPDATA%/Feel
 import os  # noqa: E402
-os.environ['APPDATA'] = 'C:/tmp/scratch/fell-phase1/appdata'
+os.environ['APPDATA'] = 'C:/tmp/scratch/feel-phase1/appdata'
 
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from fell.app import FellWindow  # noqa: E402
-from fell.config import CONFIG_PATH, FellConfig, cfg  # noqa: E402
+from feel.app import FeelWindow  # noqa: E402
+from feel.config import CONFIG_PATH, FeelConfig, cfg  # noqa: E402
 from qfluentwidgets import Theme, qconfig  # noqa: E402
 
-OUT = Path('C:/tmp/scratch/fell-phase1')
+OUT = Path('C:/tmp/scratch/feel-phase1')
 OUT.mkdir(parents=True, exist_ok=True)
 
 
@@ -35,7 +35,7 @@ def grab(widget, name: str) -> None:
 
 def main() -> int:
     app = QApplication(sys.argv)
-    window = FellWindow()
+    window = FeelWindow()
     window.resize(1180, 780)
     window.show()
     window.setMicaEffectEnabled(False)  # Mica 由 DWM 绘制，grab() 抓不到
@@ -66,7 +66,7 @@ def main() -> int:
     cfg.save()
     assert CONFIG_PATH.exists(), CONFIG_PATH
 
-    reloaded = FellConfig()
+    reloaded = FeelConfig()
     qconfig.load(CONFIG_PATH, reloaded)
     assert reloaded.seekStep.value == 7, reloaded.seekStep.value
     assert reloaded.volumeStep.value == 9, reloaded.volumeStep.value

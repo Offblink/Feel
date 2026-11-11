@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
-from fell.actions import Action, ActionRegistry, PLAYER, SHELF  # noqa: E402
+from feel.actions import Action, ActionRegistry, PLAYER, SHELF  # noqa: E402
 
 
 class RegistryTest(unittest.TestCase):

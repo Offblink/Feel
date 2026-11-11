@@ -1,9 +1,9 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if exist dist\Fell rmdir /s /q dist\Fell
-".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean fell.spec
+if exist dist\Feel rmdir /s /q dist\Feel
+".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean feel.spec
 if errorlevel 1 exit /b 1
 echo.
-echo Build OK: %~dp0dist\Fell\Fell.exe
+echo Build OK: %~dp0dist\Feel\Feel.exe
 endlocal

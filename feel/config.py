@@ -1,6 +1,6 @@
-"""Fell 配置与数据目录（SPEC §6）。
+"""Feel 配置与数据目录（SPEC §6）。
 
-配置项全部经 qfluentwidgets QConfig 持久化到 %APPDATA%/Fell/config.json，
+配置项全部经 qfluentwidgets QConfig 持久化到 %APPDATA%/Feel/config.json，
 主题使用 QConfig 内置的 themeMode（浅色/深色/跟随系统）。
 """
 import os
@@ -17,7 +17,7 @@ from qfluentwidgets import (
     qconfig,
 )
 
-APP_NAME = 'Fell'
+APP_NAME = 'Feel'
 
 # 播放模式：单曲播放 / 列表循环 / 单曲循环 / 随机播放（SPEC §5.4）
 PLAY_MODES = ['once', 'list', 'one', 'shuffle']
@@ -41,7 +41,7 @@ SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
 
 
 def app_data_dir() -> Path:
-    """%APPDATA%/Fell（不存在则创建）。"""
+    """%APPDATA%/Feel（不存在则创建）。"""
     root = os.getenv('APPDATA')
     base = Path(root) if root else Path.home() / 'AppData' / 'Roaming'
     path = base / APP_NAME
@@ -50,12 +50,12 @@ def app_data_dir() -> Path:
 
 
 CONFIG_PATH = app_data_dir() / 'config.json'
-DB_PATH = app_data_dir() / 'fell.db'
+DB_PATH = app_data_dir() / 'feel.db'
 THUMB_DIR = app_data_dir() / 'thumbs'
 
 
-class FellConfig(QConfig):
-    """Fell 的设置项。"""
+class FeelConfig(QConfig):
+    """Feel 的设置项。"""
 
     seekStep = RangeConfigItem('Player', 'SeekStepSec', 5, RangeValidator(1, 30))
     volumeStep = RangeConfigItem('Player', 'VolumeStepPct', 5, RangeValidator(1, 25))
@@ -73,6 +73,6 @@ class FellConfig(QConfig):
     directDelete = ConfigItem('Files', 'DirectDelete', False, BoolValidator())
 
 
-cfg = FellConfig()
-# 全局 qconfig 持有 FellConfig：控件（主题卡片等）直接绑定 cfg 的配置项
+cfg = FeelConfig()
+# 全局 qconfig 持有 FeelConfig：控件（主题卡片等）直接绑定 cfg 的配置项
 qconfig.load(CONFIG_PATH, cfg)

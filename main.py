@@ -1,4 +1,4 @@
-"""Fell — 本地音视频 / 图片查看器入口。
+"""Feel — 本地音视频 / 图片查看器入口。
 
 用法：
     python main.py [文件或目录]
@@ -10,9 +10,9 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from fell import logs
-from fell.app import FellWindow
-from fell.cli import find_open_target
+from feel import logs
+from feel.app import FeelWindow
+from feel.cli import find_open_target
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,10 +23,10 @@ def main(argv: list[str] | None = None) -> int:
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
         app = QApplication(argv)
-        app.setApplicationName('Fell')
-        app.setApplicationDisplayName('Fell')
+        app.setApplicationName('Feel')
+        app.setApplicationDisplayName('Feel')
 
-        window = FellWindow()
+        window = FeelWindow()
         window.show()
 
         target = find_open_target(argv[1:])

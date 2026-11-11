@@ -8,20 +8,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-# 冒烟会改 cfg（播放模式/OCR/排序）与 sqlite：隔离到 scratch，绝不写用户 %APPDATA%/Fell
+# 冒烟会改 cfg（播放模式/OCR/排序）与 sqlite：隔离到 scratch，绝不写用户 %APPDATA%/Feel
 import os  # noqa: E402
-os.environ['APPDATA'] = 'C:/tmp/scratch/fell-phase2/appdata'
+os.environ['APPDATA'] = 'C:/tmp/scratch/feel-phase2/appdata'
 
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from fell.app import FellWindow  # noqa: E402
-from fell.config import cfg  # noqa: E402
-from fell.player import MediaEngine  # noqa: E402
+from feel.app import FeelWindow  # noqa: E402
+from feel.config import cfg  # noqa: E402
+from feel.player import MediaEngine  # noqa: E402
 from tools.gen_test_media import main as gen_media  # noqa: E402
 
-OUT = Path('C:/tmp/scratch/fell-phase2')
+OUT = Path('C:/tmp/scratch/feel-phase2')
 MEDIA = OUT / 'media'
 
 
@@ -66,7 +66,7 @@ def main() -> int:
     engine.deleteLater()
 
     # ---- 2) 窗口：三种媒体形态 ----
-    window = FellWindow()
+    window = FeelWindow()
     window.resize(1180, 780)
     window.show()
     window.setMicaEffectEnabled(False)  # DWM 层 grab 不到

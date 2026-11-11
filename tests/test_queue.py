@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fell.queue import auto_index, step_index  # noqa: E402
+from feel.queue import auto_index, step_index  # noqa: E402
 
 
 class StepIndexTest(unittest.TestCase):

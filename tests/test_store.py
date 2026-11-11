@@ -6,13 +6,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fell.store import Store  # noqa: E402
+from feel.store import Store  # noqa: E402
 
 
 class StoreTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.db_path = Path(self._tmp.name) / 'fell.db'
+        self.db_path = Path(self._tmp.name) / 'feel.db'
         self.store = Store(self.db_path)
         self.file = Path('C:/media/clip.mp4')
 

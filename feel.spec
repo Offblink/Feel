@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 打包配置（onedir）。
 
-用法：.venv/Scripts/python.exe -m PyInstaller --noconfirm --clean fell.spec
-产物：dist/Fell/Fell.exe（可整目录压缩分发）。
+用法：.venv/Scripts/python.exe -m PyInstaller --noconfirm --clean feel.spec
+产物：dist/Feel/Feel.exe（可整目录压缩分发）。
 
 注意：
 - OCR 在 ProcessPoolExecutor 子进程里跑，main.py 已调用 freeze_support()；
@@ -67,7 +67,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Fell',
+    name='Feel',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -82,5 +82,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='Fell',
+    name='Feel',
 )
