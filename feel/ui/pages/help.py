@@ -17,6 +17,8 @@ from qfluentwidgets import (
     SimpleCardWidget,
     StrongBodyLabel,
     TitleLabel,
+    isDarkTheme,
+    qconfig,
 )
 
 from ...actions import ActionRegistry, display_sequence
@@ -82,11 +84,22 @@ TIPS: list[str] = [
     '出问题先看设置页「日志」：feel.log 里记录了启动、打开/改名/删除、播放失败与未捕获异常。',
 ]
 
+# 键帽是裸 QLabel（不是 fluent 标签类），样式里必须显式给 color：
+# 深色主题下文字要浅（#e8e8e8）、浅色主题下要深（#202020），随主题翻转重刷
 CHIP_STYLE = (
-    'QLabel{border: 1px solid rgba(120, 120, 120, 110); border-radius: 5px;'
-    ' padding: 2px 8px;}'
-    'QLabel:hover{border-color: rgba(120, 120, 120, 210);}'
+    'QLabel{{border: 1px solid {border}; border-radius: 5px; padding: 2px 8px;'
+    ' color: {fg};}}'
+    'QLabel:hover{{border-color: {hover};}}'
 )
+
+
+def _chip_style() -> str:
+    if isDarkTheme():
+        return CHIP_STYLE.format(fg='#e8e8e8', border='rgba(255, 255, 255, 70)',
+                                 hover='rgba(255, 255, 255, 170)')
+    return CHIP_STYLE.format(fg='#202020', border='rgba(0, 0, 0, 60)',
+                             hover='rgba(0, 0, 0, 150)')
+
 
 # 捕获态里「只按修饰键」不构成键位
 MODIFIER_KEYS = {
@@ -108,9 +121,14 @@ class ShortcutChip(QLabel):
         font = self.font()
         font.setBold(True)
         self.setFont(font)
-        self.setStyleSheet(CHIP_STYLE)
+        self.setStyleSheet(_chip_style())
+        # 主题翻转后重刷（同抽屉列表的做法；qconfig 负责在 QSS 刷完后发这个信号）
+        qconfig.themeChangedFinished.connect(self._on_theme_changed)
         self.setToolTip('点击改绑这个快捷键：按新键提交，Esc 取消')
         self.refresh()
+
+    def _on_theme_changed(self, *args) -> None:
+        self.setStyleSheet(_chip_style())
 
     def refresh(self) -> None:
         """把键帽文本同步成动作的当前键位（捕获提示词不被外部刷新覆盖）。"""

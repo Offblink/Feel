@@ -43,6 +43,9 @@ def main() -> int:
     app = QApplication(sys.argv)
     cfg.set(cfg.ocrEnabled, False)
     cfg.set(cfg.sortMode, 'name')
+    # feel.config 在 import 时就加载了上一轮残留的改键（rmtree 在 main 里才执行，
+    # cfg.save() 会把它写回），这轮必须从默认键开始
+    cfg.set(cfg.customShortcuts, {})
     cfg.save()
 
     window = FeelWindow()
