@@ -71,6 +71,8 @@ class FeelConfig(QConfig):
     ocrEnabled = ConfigItem('Library', 'OcrEnabled', True, BoolValidator())
     # 删除不再弹确认框（默认关：误删代价高，用户显式打开才生效）
     directDelete = ConfigItem('Files', 'DirectDelete', False, BoolValidator())
+    # 帮助页键帽改出来的自定义快捷键：{action_id: 主快捷键}；没改过的动作不在表里
+    customShortcuts = ConfigItem('Shortcuts', 'Custom', {})
 
 
 cfg = FeelConfig()

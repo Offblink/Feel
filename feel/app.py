@@ -17,11 +17,12 @@ from qfluentwidgets import (
 from qfluentwidgets.common.style_sheet import updateStyleSheet
 
 from .actions import Action, ActionRegistry, GLOBAL, PLAYER, SHELF, SETTINGS
+from .actions import display_sequence
 from .config import cfg
 from .filedel import move_to_recycle_bin
 from .logs import logger
 from .ocr import OcrService
-from .scanner import MEDIA_FILTER, scan_directory, scan_folder, sort_entries
+from .scanner import MEDIA_FILTER, VIDEO, scan_directory, scan_folder, sort_entries
 from .store import Store
 from .ui.pages.player import PlayerPage
 from .ui.pages.help import HelpPage
@@ -31,6 +32,9 @@ from .ui.widgets.theme_transition import ThemeTransitionOverlay
 
 PAGE_CONTEXT = {}
 log = logger()
+
+# ←/→ 在「视频」和「非视频」之间互斥归属用的键名（见 _build_actions 注册处）
+ARROW_KEYS = ('Left', 'Right')
 
 
 class FeelWindow(FluentWindow):
@@ -53,6 +57,13 @@ class FeelWindow(FluentWindow):
         self.helpPage.setObjectName('helpPage')
 
         self.registry = ActionRegistry(self)
+        # 页面/帮助页要按动作实时取键位（tooltip、键帽显示自定义键）
+        self.playerPage.registry = self.registry
+        # 媒体状态（图片/音频/视频/未打开）变了 → 重算 ←/→ 归谁
+        self.playerPage.kindChanged.connect(self.registry.refresh_enabled)
+        self.registry.shortcutsChanged.connect(
+            lambda _aid: self._refresh_tooltips()
+        )
         self._nav: dict[str, object] = {}
         self._skip_theme_refresh = 0
 
@@ -101,6 +112,8 @@ class FeelWindow(FluentWindow):
         self.shelfPage.set_search_visible(cfg.ocrEnabled.value)
 
         self._build_actions()
+        # 帮助页键帽在动作全部注册后构建，改键时靠 shortcutsChanged 刷新
+        self.helpPage.bind_registry(self.registry)
         # 主题卡片等直接改 cfg.themeMode 的路径：主题翻转后重刷 QSS。
         # 重刷前先暂停正在播放的媒体：Qt6 FFmpeg 下音频播放中做全局 QSS 重刷
         # 会死锁（本机稳定复现，见 SPEC 已知问题），暂停到位后再刷，刷完恢复。
@@ -112,10 +125,10 @@ class FeelWindow(FluentWindow):
         self._on_page_changed(self.stackedWidget.currentIndex())  # 初始页可能不发信号
 
         # 设置变更 → 按钮悬停提示 / 步长实时生效（FR-04/05）
-        cfg.seekStep.valueChanged.connect(lambda _v: self.playerPage.refresh_shortcut_tooltips())
+        cfg.seekStep.valueChanged.connect(lambda _v: self._refresh_tooltips())
         cfg.volumeStep.valueChanged.connect(self._on_volume_step_changed)
         self._on_volume_step_changed(cfg.volumeStep.value)
-        self.playerPage.refresh_shortcut_tooltips()
+        self._refresh_tooltips()
         log.info('窗口初始化完成：%d 个动作', len(self.registry.actions))
 
     # ---- 动作 ----
@@ -136,24 +149,36 @@ class FeelWindow(FluentWindow):
                    enabled_when=lambda: page.has_media)
         )
         r.register(
-            Action('prev_file', '上一个文件', 'Ctrl+Left', FluentIcon.LEFT_ARROW,
+            Action('prev_file', '上一个文件', 'Left', FluentIcon.LEFT_ARROW,
                    context=PLAYER, handler=page.prev_file,
-                   enabled_when=lambda: len(page.entries) > 1)
+                   enabled_when=lambda: len(page.entries) > 1,
+                   extra_shortcuts=('Ctrl+Left',),
+                   active_when=lambda seq: seq not in ARROW_KEYS
+                   or page.current_kind != VIDEO)
         )
         r.register(
-            Action('next_file', '下一个文件', 'Ctrl+Right', FluentIcon.RIGHT_ARROW,
+            Action('next_file', '下一个文件', 'Right', FluentIcon.RIGHT_ARROW,
                    context=PLAYER, handler=page.next_file,
-                   enabled_when=lambda: len(page.entries) > 1)
+                   enabled_when=lambda: len(page.entries) > 1,
+                   extra_shortcuts=('Ctrl+Right',),
+                   active_when=lambda seq: seq not in ARROW_KEYS
+                   or page.current_kind != VIDEO)
         )
+        # ←/→ 归属按媒体状态互斥（active_when 门控 QShortcut）：
+        # 视频里 ←/→ 快进快退、Ctrl+←/→ 切文件；图片/音频/未打开里 ←/→ 直接切文件。
         r.register(
             Action('seek_back', '后退', 'Left', FluentIcon.CARE_LEFT_SOLID,
                    context=PLAYER, handler=lambda: page.step_seek(-cfg.seekStep.value),
-                   enabled_when=lambda: page.has_media)
+                   enabled_when=lambda: page.has_media,
+                   active_when=lambda seq: seq not in ARROW_KEYS
+                   or page.current_kind == VIDEO)
         )
         r.register(
             Action('seek_forward', '前进', 'Right', FluentIcon.CARE_RIGHT_SOLID,
                    context=PLAYER, handler=lambda: page.step_seek(cfg.seekStep.value),
-                   enabled_when=lambda: page.has_media)
+                   enabled_when=lambda: page.has_media,
+                   active_when=lambda seq: seq not in ARROW_KEYS
+                   or page.current_kind == VIDEO)
         )
         r.register(
             Action('volume_up', '音量+', 'Up', FluentIcon.VOLUME,
@@ -331,6 +356,42 @@ class FeelWindow(FluentWindow):
         ):
             widget.clicked.connect(lambda _checked=False, aid=action_id:
                                    self.registry.trigger(aid))
+
+        # 启动时套用帮助页键帽改出来的自定义快捷键（冲突的按默认键忽略）
+        for aid, sequence in cfg.customShortcuts.value.items():
+            if (aid in r.actions and isinstance(sequence, str) and sequence
+                    and not r.conflicts(aid, sequence)):
+                r.set_shortcut(aid, sequence)
+
+    def _refresh_tooltips(self) -> None:
+        """键位 / 步长变更后统一重写所有带快捷键提示的 tooltip（含自定义键）。
+
+        只写「自定义文案」的那几处；bind_widget 自动生成的由 registry 改绑时自己刷。
+        """
+        r = self.registry
+
+        def keys(aid: str, default: str) -> str:
+            sequences = r.action(aid).shortcuts()
+            return ' / '.join(display_sequence(s) for s in sequences) or default
+
+        self.playerPage.refresh_shortcut_tooltips()
+        self.shelfPage.gridContainer.setToolTip(
+            f'打开选中（{keys("open_selected", "Enter")} / 双击卡片）'
+        )
+        self.shelfPage.gridContainer.setToolTip(
+            f'重命名（{keys("rename_selected", "F2")}，单选；也可悬停卡片左上角铅笔）'
+        )
+        self.shelfPage.searchEdit.setToolTip(
+            f'搜索图片文字（{keys("focus_search", "Ctrl+F")}）'
+        )
+        self.playerPage.speedBtn.setToolTip(
+            f'播放速度（点击选档；{keys("speed_up", "]")} 加快 / '
+            f'{keys("speed_down", "[")} 减慢）'
+        )
+        # 音量键位在 VolumeButton 自己的 tooltip 里：触发一次重写（set_step 幂等）
+        self.playerPage.volumeBtn.set_step(cfg.volumeStep.value)
+        # 主题小按钮的 Ctrl+T 提示由卡片 _sync 写：改过 toggle_theme 就重刷一次
+        self.settingsPage.themeCard._sync()
 
     def _goto(self, action_id: str) -> None:
         target = {

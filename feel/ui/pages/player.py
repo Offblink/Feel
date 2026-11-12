@@ -45,6 +45,7 @@ from ...config import PLAY_MODE_TEXTS, PLAY_MODES, SPEEDS, cfg
 from ...frameprobe import FrameGrabber
 from ...logs import logger
 from ...player import MediaEngine
+from ...actions import display_sequence
 from ...queue import auto_index, step_index
 from ...scanner import AUDIO, IMAGE, VIDEO, MediaEntry, scan_directory
 from ...ui.widgets.bookmark_popup import BookmarkPopup
@@ -80,11 +81,15 @@ class PlayerPage(QWidget):
 
     queueChanged = Signal()
     favoriteChanged = Signal()
+    # 当前媒体种类（图片/音频/视频/未打开）变了：左右键归属要重算（FeelWindow 接 registry）
+    kindChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('playerPage')
         self.store = None
+        self.registry = None
+        self._synced_kind = None
 
         self.entries: list[MediaEntry] = []
         # 目录全量列表（资料库展示用）；self.entries 是播放队列，可能只是它的筛选子集
@@ -406,7 +411,11 @@ class PlayerPage(QWidget):
     def _update_speed_button(self) -> None:
         rate = float(cfg.speed.value)
         self.speedBtn.setText(f'{rate:g}×')
-        self.speedBtn.setToolTip(f'播放速度：{rate:g}×（点击选档，] 加快 / [ 减慢）')
+        self.speedBtn.setToolTip(
+            f'播放速度：{rate:g}×（点击选档，'
+            f'{self._action_keys("speed_up", "]")} 加快 / '
+            f'{self._action_keys("speed_down", "[")} 减慢）'
+        )
 
     def _wire_engine(self) -> None:
         self.engine.positionChanged.connect(self.seekBar.set_position)
@@ -755,8 +764,11 @@ class PlayerPage(QWidget):
         self.fullscreenBtn.setIcon(
             FluentIcon.BACK_TO_WINDOW if full else FluentIcon.FULL_SCREEN
         )
+        escape = self._action_keys('exit_fullscreen', 'Esc')
+        enter = self._action_keys('fullscreen', 'F')
         self.fullscreenBtn.setToolTip(
-            '退出全屏（Esc / F）' if full else '全屏（F / 双击画面）'
+            f'退出全屏（{escape} / {enter}）' if full
+            else f'全屏（{enter} / 双击画面）'
         )
 
     @property
@@ -837,7 +849,8 @@ class PlayerPage(QWidget):
         mode = cfg.playMode.value
         self.modeBtn.setText(PLAY_MODE_TEXTS.get(mode, '列表循环'))
         self.modeBtn.setToolTip(
-            f'播放模式：{PLAY_MODE_TEXTS.get(mode, mode)}（M 切换，箭头直选）'
+            f'播放模式：{PLAY_MODE_TEXTS.get(mode, mode)}'
+            f'（{self._action_keys("play_mode", "M")} 切换，箭头直选）'
         )
 
     def _on_media_ended(self) -> None:
@@ -958,7 +971,10 @@ class PlayerPage(QWidget):
         ink = QColor(255, 255, 255, 230) if isDarkTheme() else QColor(55, 55, 55, 220)
         # 实心 = 已收藏，描边 = 未收藏（颜色只是辅助）
         self.favoriteBtn.setIcon(heart_icon(accent if favorite else ink, 18, favorite))
-        self.favoriteBtn.setToolTip('取消收藏（E）' if favorite else '收藏（E）')
+        favorite_key = self._action_keys('favorite', 'E')
+        self.favoriteBtn.setToolTip(
+            f'取消收藏（{favorite_key}）' if favorite else f'收藏（{favorite_key}）'
+        )
 
     def add_bookmark(self) -> None:
         """弹出右侧输入框；点保存才写入（时间 + 内容键值对），取消丢弃。"""
@@ -1074,6 +1090,10 @@ class PlayerPage(QWidget):
 
     # ---------------- 同步 ----------------
     def _sync_controls(self) -> None:
+        kind = self.current_kind
+        if kind != self._synced_kind:
+            self._synced_kind = kind
+            self.kindChanged.emit()
         media = self.has_media
         image = self.current_kind == IMAGE
         for button in (self.playBtn, self.seekBackBtn, self.seekFwdBtn, self.volumeBtn,
@@ -1112,25 +1132,49 @@ class PlayerPage(QWidget):
         self.engine.set_volume(volume)
         self.volumeOsd.show_level(volume)
 
+    def _action_keys(self, action_id: str, default: str = '') -> str:
+        """动作当前键位的显示形态（含帮助页自定义改绑），用于 tooltip/文案。"""
+        registry = self.registry
+        if registry is not None and action_id in registry.actions:
+            sequences = registry.action(action_id).shortcuts()
+            if sequences:
+                return ' / '.join(display_sequence(s) for s in sequences)
+        return default
+
     def refresh_shortcut_tooltips(self) -> None:
-        """步长设置变更后同步按钮文字与 tooltip（FR-16）。"""
+        """步长 / 自定义键位变更后同步按钮文字与 tooltip（FR-16）。"""
         n = cfg.seekStep.value
         self.seekBackBtn.setText(f'−{n}s')
         self.seekFwdBtn.setText(f'+{n}s')
-        self.seekBackBtn.setToolTip(f'后退 {n} 秒（←）')
-        self.seekFwdBtn.setToolTip(f'前进 {n} 秒（→）')
-        self.prevBtn.setToolTip('上一个文件（Ctrl+←）')
-        self.nextBtn.setToolTip('下一个文件（Ctrl+→）')
-        self.playBtn.setToolTip('播放/暂停（Space）')
-        self.rotateCCWBtn.setToolTip('逆时针旋转 90°（Ctrl+L）')
-        self.rotateCWBtn.setToolTip('顺时针旋转 90°（Ctrl+R）')
-        self.zoomInBtn.setToolTip('放大（滚轮上 / =）')
-        self.zoomOutBtn.setToolTip('缩小（滚轮下 / -）')
-        self.zoomLabelBtn.setToolTip('缩放重置为 100%（Ctrl+0）')
-        self.fullscreenBtn.setToolTip('全屏（F / 双击画面）')
+        self.seekBackBtn.setToolTip(
+            f'后退 {n} 秒（{self._action_keys("seek_back", "←")}）')
+        self.seekFwdBtn.setToolTip(
+            f'前进 {n} 秒（{self._action_keys("seek_forward", "→")}）')
+        self.prevBtn.setToolTip(
+            f'上一个文件（{self._action_keys("prev_file", "← / Ctrl+←")}）')
+        self.nextBtn.setToolTip(
+            f'下一个文件（{self._action_keys("next_file", "→ / Ctrl+→")}）')
+        self.playBtn.setToolTip(
+            f'播放/暂停（{self._action_keys("play_pause", "Space")}）')
+        self.rotateCCWBtn.setToolTip(
+            f'逆时针旋转 90°（{self._action_keys("rotate_ccw", "Ctrl+L")}）')
+        self.rotateCWBtn.setToolTip(
+            f'顺时针旋转 90°（{self._action_keys("rotate_cw", "Ctrl+R")}）')
+        self.zoomInBtn.setToolTip(
+            f'放大（滚轮上 / {self._action_keys("zoom_in", "=")}）')
+        self.zoomOutBtn.setToolTip(
+            f'缩小（滚轮下 / {self._action_keys("zoom_out", "-")}）')
+        self.zoomLabelBtn.setToolTip(
+            f'缩放重置为 100%（{self._action_keys("zoom_reset", "Ctrl+0")}）')
         self.update_fullscreen_button()
-        self.bookmarkBtn.setToolTip('添加书签（B，输入内容后保存）')
-        self.drawerBtn.setToolTip('详情抽屉（I）')
+        self.bookmarkBtn.setToolTip(
+            f'添加书签（{self._action_keys("bookmark_add", "B")}，输入内容后保存）')
+        self.drawerBtn.setToolTip(
+            f'详情抽屉（{self._action_keys("drawer_toggle", "I")}）')
+        self.emptyLabel.setText(
+            f'按 {self._action_keys("open_file", "Ctrl+O")} 打开文件，'
+            '自动加载同目录的图片 / 音频 / 视频'
+        )
 
     def _on_error(self, message: str) -> None:
         logger().warning('播放失败：%s（%s）', message, self.current_path)

@@ -142,6 +142,83 @@ def main() -> int:
     window.grab().save(str(OUT / 'help.png'))
     print('help page OK, registry problems:', window.registry.problems())
 
+    # ---- 5) 左右键语义：视频 ←/→ 快进快退；图片 / 音频 ←/→ 上/下一个 ----
+    window.open_path(MEDIA / 'video.mp4')
+    QTest.qWait(900)
+    assert page.current_kind == 'video', page.current_kind
+    page.engine.pause()
+    page.engine.seek(0)
+    QTest.qWait(300)
+    assert page.engine.position < 600, page.engine.position
+    before = page.index
+    QTest.keyClick(window, Qt.Key_Right)
+    QTest.qWait(350)
+    assert page.engine.position > 1400, f'视频里 → 没有快进：{page.engine.position}'
+    assert page.index == before, '视频里 → 不该切换文件'
+    QTest.keyClick(window, Qt.Key_Left)
+    QTest.qWait(350)
+    assert page.engine.position < 600, f'视频里 ← 没有后退：{page.engine.position}'
+    assert page.index == before
+    print('video arrow seek OK')
+
+    images = [e.path for e in page.entries if e.kind == 'image']
+    assert images, '测试媒体里没有图片'
+    window.open_path(images[0])
+    QTest.qWait(600)
+    assert page.current_kind == 'image', page.current_kind
+    before = page.index
+    QTest.keyClick(window, Qt.Key_Right)
+    QTest.qWait(450)
+    assert page.index == (before + 1) % len(page.entries), \
+        f'图片里 → 没有切到下一个：{before} -> {page.index}'
+    QTest.keyClick(window, Qt.Key_Left)
+    QTest.qWait(450)
+    assert page.index == before, '图片里 ← 没有切回上一个'
+    print('image arrow navigate OK')
+
+    audio = next((e.path for e in page.entries if e.kind == 'audio'), None)
+    assert audio is not None, '测试媒体里没有音频'
+    window.open_path(audio)
+    QTest.qWait(800)
+    assert page.current_kind == 'audio', page.current_kind
+    before = page.index
+    QTest.keyClick(window, Qt.Key_Right)
+    QTest.qWait(450)
+    assert page.index == (before + 1) % len(page.entries), \
+        f'音频里 → 没有切到下一个：{before} -> {page.index}'
+    print('audio arrow navigate OK')
+
+    # ---- 6) 帮助页键帽改键：冲突提示 / 提交 / 持久化 / tooltip 同步 / Esc 取消 ----
+    assert window.registry.trigger('goto_help')
+    QTest.qWait(300)
+    chip = help_page.chips['bookmark_add']
+    assert chip.text() == 'B', chip.text()
+    QTest.mouseClick(chip, Qt.LeftButton)
+    QTest.qWait(100)
+    assert chip._capturing, '点键帽没有进入捕获态'
+    QTest.keyClick(chip, Qt.Key_F)  # F 已被「全屏」占用
+    QTest.qWait(300)
+    assert window.registry.action('bookmark_add').shortcut == 'B', '冲突键被提交了'
+    assert chip._capturing, '冲突后应保持捕获态等下一个键'
+    QTest.keyClick(chip, Qt.Key_N)
+    QTest.qWait(300)
+    assert window.registry.action('bookmark_add').shortcut == 'N', \
+        window.registry.action('bookmark_add').shortcut
+    assert cfg.customShortcuts.value.get('bookmark_add') == 'N', \
+        cfg.customShortcuts.value
+    assert chip.text() == 'N', chip.text()
+    assert 'N' in page.bookmarkBtn.toolTip(), page.bookmarkBtn.toolTip()
+    print('chip rebind + persist + tooltip OK')
+
+    QTest.mouseClick(chip, Qt.LeftButton)
+    QTest.qWait(100)
+    QTest.keyClick(chip, Qt.Key_Escape)
+    QTest.qWait(200)
+    assert not chip._capturing, 'Esc 没有取消捕获'
+    assert window.registry.action('bookmark_add').shortcut == 'N', \
+        'Esc 不该改掉已提交的键'
+    print('esc cancels capture OK')
+
     print('SMOKE PHASE11 OK')
     return 0
 

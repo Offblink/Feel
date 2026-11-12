@@ -46,9 +46,15 @@ class ThemeSettingCard(SettingCard):
         self.themeButton.setIcon(
             FluentIcon.QUIET_HOURS if dark else FluentIcon.BRIGHTNESS
         )
+        registry = getattr(self.window(), 'registry', None)
+        if registry is not None and 'toggle_theme' in registry.actions:
+            sequences = registry.action('toggle_theme').shortcuts()
+            toggle_key = ' / '.join(sequences) or 'Ctrl+T'
+        else:
+            toggle_key = 'Ctrl+T'
         self.themeButton.setToolTip(
-            '深色主题（点击切到浅色，Ctrl+T）' if dark
-            else '浅色主题（点击切到深色，Ctrl+T）'
+            f'深色主题（点击切到浅色，{toggle_key}）' if dark
+            else f'浅色主题（点击切到深色，{toggle_key}）'
         )
 
     def _on_clicked(self) -> None:

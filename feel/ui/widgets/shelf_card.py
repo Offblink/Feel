@@ -5,6 +5,7 @@ from PySide6.QtCore import QEvent, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLineEdit, QWidget
 from qfluentwidgets import FluentIcon, isDarkTheme, qconfig
+from ...actions import display_sequence
 from .heart_icon import heart_pixmap
 
 CARD_W, CARD_H = 184, 168
@@ -116,14 +117,25 @@ class ShelfCard(QWidget):
             self.clicked.emit(self.entry, event.modifiers())
             event.accept()
 
+    def _action_key(self, action_id: str, default: str) -> str:
+        """动作当前键位（帮助页改过键就显示新键）；窗口没建好时退回默认。"""
+        registry = getattr(self.window(), 'registry', None)
+        if registry is not None and action_id in registry.actions:
+            sequences = registry.action(action_id).shortcuts()
+            if sequences:
+                return ' / '.join(display_sequence(s) for s in sequences)
+        return default
+
     def mouseMoveEvent(self, event):
         position = event.position()
         if self._shows_actions() and self._delete_rect().contains(position):
             self.setToolTip('移入回收站')
         elif self._shows_actions() and self._rename_rect().contains(position):
-            self.setToolTip('重命名（F2）')
+            self.setToolTip(f'重命名（{self._action_key("rename_selected", "F2")}）')
         elif self._heart_rect().contains(position):
-            self.setToolTip('收藏 / 取消收藏（F）')
+            self.setToolTip(
+                f'收藏 / 取消收藏（{self._action_key("favorite", "E")}）'
+            )
         else:
             self.setToolTip(str(self.entry.path))
         super().mouseMoveEvent(event)

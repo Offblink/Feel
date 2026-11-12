@@ -10,6 +10,8 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon, TransparentToolButton, isDarkTheme, qconfig
 
+from ...actions import display_sequence
+
 
 def _accent() -> QColor:
     color = qconfig.themeColor.value
@@ -189,8 +191,18 @@ class VolumeButton(QWidget):
         self._update_tooltip()
         self.volumeChanged.emit(self._volume)
 
+    def _action_key(self, action_id: str, default: str) -> str:
+        registry = getattr(self.window(), 'registry', None)
+        if registry is not None and action_id in registry.actions:
+            sequences = registry.action(action_id).shortcuts()
+            if sequences:
+                return ' / '.join(display_sequence(s) for s in sequences)
+        return default
+
     def _update_tooltip(self) -> None:
-        text = f'音量 {self._volume}%（悬停拖动 / 滚轮 / ↑↓）'
+        up = self._action_key('volume_up', '↑')
+        down = self._action_key('volume_down', '↓')
+        text = f'音量 {self._volume}%（悬停拖动 / 滚轮 / {up} {down}）'
         self.setToolTip(text)
         self._button.setToolTip(text)
 
