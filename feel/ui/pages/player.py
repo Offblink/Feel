@@ -32,6 +32,7 @@ from qfluentwidgets import (
     IconWidget,
     IndeterminateProgressRing,
     InfoBar,
+    MenuAnimationType,
     RoundMenu,
     SplitPushButton,
     StrongBodyLabel,
@@ -45,6 +46,8 @@ from ...config import PLAY_MODE_TEXTS, PLAY_MODES, SPEEDS, cfg
 from ...frameprobe import FrameGrabber
 from ...logs import logger
 from ...player import MediaEngine
+from qfluentwidgets.common.screen import getCurrentScreenGeometry
+
 from ...actions import display_sequence
 from ...queue import auto_index, step_index
 from ...scanner import AUDIO, IMAGE, VIDEO, MediaEntry, scan_directory
@@ -380,7 +383,7 @@ class PlayerPage(QWidget):
         current = cfg.playMode.value
         for action, mode in zip(self.modeMenuActions, PLAY_MODES):
             action.setChecked(mode == current)
-        self.modeMenu.exec(self.modeBtn.mapToGlobal(QPoint(0, self.modeBtn.height())))
+        self._popup_menu_at(self.modeMenu, self.modeBtn, center=False)
 
     # ---- 倍速（FR-02 扩展）----
     def _build_speed_menu(self) -> None:
@@ -407,10 +410,45 @@ class PlayerPage(QWidget):
             # press 送达了按钮并已关掉菜单的时序：这次点击是「关」，不再弹
             self._speed_menu_was_open = False
             return
-        self.speedMenu.view.setMinimumWidth(self.speedBtn.width())
-        self.speedMenu.exec(
-            self.speedBtn.mapToGlobal(QPoint(0, self.speedBtn.height()))
-        )
+        self._popup_menu_at(self.speedMenu, self.speedBtn, center=True)
+
+    def _popup_menu_at(self, menu, button, center: bool) -> None:
+        """菜单落位：向下放得下就贴按钮底边下弹，否则贴按钮顶边上弹，都不遮挡按钮。
+
+        不能直接 exec(按钮正下方)：库的 `_endPosition` 把下弹菜单顶边收到
+        anchor-4、放不下再按屏幕底上移——贴屏底时整块盖回按钮（倍速 6 项挡得多、
+        模式 4 项挡得少）；库 `heightForAnimation` 的选向在两边都饱和到菜单全高时
+        恒判「放得下」，照样选下弹。这里显式几何判向：按库的内缩量（下弹顶 =
+        anchor-4、上弹底 = anchor+10）反推锚点，并要求视口可容纳全高（含
+        adjustSize 的可用空间公式），保证最终矩形与按钮零相交。
+        """
+        menu.view.setMinimumWidth(button.width())
+        menu.view.adjustSize()
+        menu.adjustSize()
+        if center:
+            x = (-menu.width() // 2
+                 + menu.layout().contentsMargins().left() + button.width() // 2)
+        else:
+            x = 0
+        ss = getCurrentScreenGeometry()
+        h = menu.height()
+        origin = button.mapToGlobal(QPoint(x, 0))
+        top, bottom = origin.y(), origin.y() + button.height()
+        gap = 6
+        # 下弹锚点下移 4+gap → 最终顶边 = bottom+gap；上弹锚点上移 10+gap → 最终底边 = top-gap
+        down_anchor = QPoint(origin.x(), bottom + 4 + gap)
+        up_anchor = QPoint(origin.x(), top - 10 - gap)
+        if h <= ss.bottom() - down_anchor.y() - 10:
+            menu.view.adjustSize(down_anchor, MenuAnimationType.DROP_DOWN)
+            menu.exec(down_anchor, aniType=MenuAnimationType.DROP_DOWN)
+        elif h <= up_anchor.y() - ss.top() - 28:
+            menu.view.adjustSize(up_anchor, MenuAnimationType.PULL_UP)
+            menu.exec(up_anchor, aniType=MenuAnimationType.PULL_UP)
+        else:
+            # 屏幕实在太挤：退回库原锚点，接受内缩/滚动（极端小屏兜底）
+            fallback = button.mapToGlobal(QPoint(x, button.height()))
+            menu.view.adjustSize(fallback, MenuAnimationType.DROP_DOWN)
+            menu.exec(fallback, aniType=MenuAnimationType.DROP_DOWN)
 
     def _on_speed_menu_hide(self, *args) -> None:
         # 100ms：只覆盖「弹层在 press 投递前就关了」这种同一事件内的先后差；
