@@ -103,7 +103,6 @@ class PlayerPage(QWidget):
         self._hold_active = False
         self._hold_image = None
         self._skip_video_click = False
-        self._speed_btn_pressed = False  # speedBtn 点击配对（见 eventFilter）
         self._speed_menu_was_open = False    # 本次点击是在「关菜单」
         self._speed_menu_hide_recent = False  # 菜单刚被关（aboutToHide 余温）
         self.zoomChanged = None  # 保持类型提示友好；实际用 _update_zoom_label
@@ -329,7 +328,6 @@ class PlayerPage(QWidget):
         self.bookmarkBtn.clicked.connect(self.add_bookmark)
         self.modeBtn.clicked.connect(self.cycle_mode)
         self.modeBtn.dropDownClicked.connect(self._show_mode_menu)
-        self.speedBtn.clicked.connect(self._sync_speed_menu_checks)
         self.rotateCCWBtn.clicked.connect(lambda: self.rotate(-90))
         self.rotateCWBtn.clicked.connect(lambda: self.rotate(90))
         self.zoomOutBtn.clicked.connect(lambda: self.zoom_by(1 / ZOOM_STEP))
@@ -393,21 +391,26 @@ class PlayerPage(QWidget):
             action.triggered.connect(lambda _checked=False, s=speed: self.set_speed(s))
             self.speedMenu.addAction(action)
             self.speedMenuActions.append(action)
-        # 下拉按钮在 mouseRelease 里自己弹菜单（clicked 先发，用来同步勾选）
-        self.speedBtn.setMenu(self.speedMenu)
-        # 「点一下开、再点一下关」：RoundMenu.exec 非模态（= show + 动画），
-        # 而 DropDownPushButton.mouseReleaseEvent 无条件 _showMenu()，第二次点击
-        # 的 release 会把刚关的菜单当场重开。包一层：本次点击是「关」就跳过重开。
-        real_show = self.speedBtn._showMenu
-
-        def guarded_show():
-            if self._speed_menu_was_open:
-                self._speed_menu_was_open = False
-                return
-            real_show()
-
-        self.speedBtn._showMenu = guarded_show
+        # 模仿播放模式按钮的开关门路：**不 setMenu**——DropDownPushButton.mouseReleaseEvent
+        # 会在 release 里无条件 _showMenu()，而 RoundMenu.exec 非模态（show+动画），
+        # 第二次点击的 release 把刚关的菜单当场重开（「点不关」的根子）。
+        # 不 setMenu 后 _showMenu() 直接早退；只在 clicked 里弹——clicked 要
+        # press+release 配对才发（模式按钮 dropDownClicked 同款门）：弹层吃掉
+        # press 时 clicked 不发，天然交替。
+        self.speedBtn.clicked.connect(self._show_speed_menu)
         self.speedMenu.aboutToHide.connect(self._on_speed_menu_hide)
+
+    def _show_speed_menu(self) -> None:
+        """clicked（配对门）触发：同步勾选后弹出；本次点击在关菜单则跳过。"""
+        self._sync_speed_menu_checks()
+        if self._speed_menu_was_open:
+            # press 送达了按钮并已关掉菜单的时序：这次点击是「关」，不再弹
+            self._speed_menu_was_open = False
+            return
+        self.speedMenu.view.setMinimumWidth(self.speedBtn.width())
+        self.speedMenu.exec(
+            self.speedBtn.mapToGlobal(QPoint(0, self.speedBtn.height()))
+        )
 
     def _on_speed_menu_hide(self, *args) -> None:
         # 100ms：只覆盖「弹层在 press 投递前就关了」这种同一事件内的先后差；
@@ -455,24 +458,16 @@ class PlayerPage(QWidget):
     # ---------------- 事件 ----------------
     def eventFilter(self, obj, event):
         if obj is self.speedBtn:
-            # 倍速下拉「点一下开、再点一下关」：菜单开着时第二次点击，press 与
-            # release 都会落到按钮上（RoundMenu 非模态、不占鼠标），release 又无条件
-            # _showMenu() 重开 → 看起来只能开不能关。按下时菜单还开着就当场关掉并
-            # 记账（无论弹层机制在 press 前后哪一刻关，都由我们这侧兜底）；记账由
-            # _showMenu 包装层消费——那一次 release 跳过重开。
+            # press 送达按钮且菜单还开着的时序：当场关掉并记账，_show_speed_menu
+            # 见账跳过弹出（弹层吃掉 press 的时序由 clicked 配对门天然覆盖，无需干预）
             if event.type() == QEvent.MouseButtonPress:
-                self._speed_btn_pressed = True
                 if self.speedMenu.isVisible():
                     self.speedMenu.close()
                     self._speed_menu_was_open = True
                 else:
-                    # 弹层抢在 press 投递前就关了（aboutToHide 余温内）：同样算「关」；
-                    # 250ms 过期，避免菜单在别处被关掉后误吞下一次正常点击
+                    # 弹层抢在 press 投递前就关：按 aboutToHide 余温认账；
+                    # 100ms 过期，别把下一次正常打开误判成关闭
                     self._speed_menu_was_open = self._speed_menu_hide_recent
-            elif event.type() == QEvent.MouseButtonRelease:
-                if not self._speed_btn_pressed:
-                    return True  # 按钮没收到 press（被弹层吃掉）：吞掉，别重开
-                self._speed_btn_pressed = False
         if self._title_renaming and event.type() == QEvent.MouseButtonPress:
             # 编辑期间装的是应用级过滤器：点别处（画面/按钮/标题栏）即收起并提交。
             # 只靠 editingFinished 不管用——舞台控件都是 NoFocus，点了焦点也不转移。

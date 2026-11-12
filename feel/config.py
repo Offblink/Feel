@@ -59,6 +59,8 @@ class FeelConfig(QConfig):
 
     seekStep = RangeConfigItem('Player', 'SeekStepSec', 5, RangeValidator(1, 30))
     volumeStep = RangeConfigItem('Player', 'VolumeStepPct', 5, RangeValidator(1, 25))
+    # 当前音量：启动读它初始化（不再写死），每次调整持久化
+    volume = RangeConfigItem('Player', 'Volume', 80, RangeValidator(0, 100))
     playMode = OptionsConfigItem(
         'Player', 'PlayMode', 'list', OptionsValidator(PLAY_MODES)
     )

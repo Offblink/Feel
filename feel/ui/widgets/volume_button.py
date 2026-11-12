@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon, TransparentToolButton, isDarkTheme, qconfig
 
 from ...actions import display_sequence
+from ...config import cfg
 
 
 def _accent() -> QColor:
@@ -149,7 +150,8 @@ class VolumeButton(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._volume = 80
+        # 音量读配置初始化（不写死）：上一次调好的值启动即生效
+        self._volume = max(0, min(100, int(cfg.volume.value)))
         self._step = 5
         self.setFixedSize(40, 40)
 
@@ -161,6 +163,8 @@ class VolumeButton(QWidget):
         self._button.installEventFilter(self)
 
         self._popup = VolumePopup(self)
+        # 弹层滑块有自己的默认 50：不同步的话第一次打开会显示 50 而实际不是
+        self._popup.set_value(self._volume)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.setInterval(300)
@@ -181,6 +185,7 @@ class VolumeButton(QWidget):
         self._volume = max(0, min(100, int(volume)))
         self._popup.set_value(self._volume)
         self._update_tooltip()
+        cfg.set(cfg.volume, self._volume)  # 持久化：下次启动读回
 
     def _apply_volume(self, volume: int) -> None:
         volume = max(0, min(100, int(volume)))
@@ -189,6 +194,7 @@ class VolumeButton(QWidget):
         self._volume = volume
         self._popup.set_value(self._volume)
         self._update_tooltip()
+        cfg.set(cfg.volume, self._volume)  # 持久化：拖动/滚轮/按键都走这
         self.volumeChanged.emit(self._volume)
 
     def _action_key(self, action_id: str, default: str) -> str:
