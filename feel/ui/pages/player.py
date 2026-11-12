@@ -103,6 +103,9 @@ class PlayerPage(QWidget):
         self._hold_active = False
         self._hold_image = None
         self._skip_video_click = False
+        self._speed_btn_pressed = False  # speedBtn 点击配对（见 eventFilter）
+        self._speed_menu_was_open = False    # 本次点击是在「关菜单」
+        self._speed_menu_hide_recent = False  # 菜单刚被关（aboutToHide 余温）
         self.zoomChanged = None  # 保持类型提示友好；实际用 _update_zoom_label
 
         self.engine = MediaEngine(self)
@@ -283,6 +286,8 @@ class PlayerPage(QWidget):
         self._update_mode_button()
         self.speedBtn.setFixedHeight(32)
         self.speedBtn.setMinimumWidth(86)
+        # 再点一下关闭菜单：吃掉「菜单吃掉 press、只剩 release 回落到按钮」那半拍
+        self.speedBtn.installEventFilter(self)
         self._update_speed_button()
 
         self.volumeBtn = VolumeButton(self.transport)
@@ -390,6 +395,28 @@ class PlayerPage(QWidget):
             self.speedMenuActions.append(action)
         # 下拉按钮在 mouseRelease 里自己弹菜单（clicked 先发，用来同步勾选）
         self.speedBtn.setMenu(self.speedMenu)
+        # 「点一下开、再点一下关」：RoundMenu.exec 非模态（= show + 动画），
+        # 而 DropDownPushButton.mouseReleaseEvent 无条件 _showMenu()，第二次点击
+        # 的 release 会把刚关的菜单当场重开。包一层：本次点击是「关」就跳过重开。
+        real_show = self.speedBtn._showMenu
+
+        def guarded_show():
+            if self._speed_menu_was_open:
+                self._speed_menu_was_open = False
+                return
+            real_show()
+
+        self.speedBtn._showMenu = guarded_show
+        self.speedMenu.aboutToHide.connect(self._on_speed_menu_hide)
+
+    def _on_speed_menu_hide(self, *args) -> None:
+        # 100ms：只覆盖「弹层在 press 投递前就关了」这种同一事件内的先后差；
+        # 拉太长会把紧接着的「再打开」误判成关闭点击
+        self._speed_menu_hide_recent = True
+        QTimer.singleShot(100, self._clear_speed_hide_recent)
+
+    def _clear_speed_hide_recent(self) -> None:
+        self._speed_menu_hide_recent = False
 
     def _sync_speed_menu_checks(self) -> None:
         current = float(cfg.speed.value)
@@ -427,6 +454,25 @@ class PlayerPage(QWidget):
 
     # ---------------- 事件 ----------------
     def eventFilter(self, obj, event):
+        if obj is self.speedBtn:
+            # 倍速下拉「点一下开、再点一下关」：菜单开着时第二次点击，press 与
+            # release 都会落到按钮上（RoundMenu 非模态、不占鼠标），release 又无条件
+            # _showMenu() 重开 → 看起来只能开不能关。按下时菜单还开着就当场关掉并
+            # 记账（无论弹层机制在 press 前后哪一刻关，都由我们这侧兜底）；记账由
+            # _showMenu 包装层消费——那一次 release 跳过重开。
+            if event.type() == QEvent.MouseButtonPress:
+                self._speed_btn_pressed = True
+                if self.speedMenu.isVisible():
+                    self.speedMenu.close()
+                    self._speed_menu_was_open = True
+                else:
+                    # 弹层抢在 press 投递前就关了（aboutToHide 余温内）：同样算「关」；
+                    # 250ms 过期，避免菜单在别处被关掉后误吞下一次正常点击
+                    self._speed_menu_was_open = self._speed_menu_hide_recent
+            elif event.type() == QEvent.MouseButtonRelease:
+                if not self._speed_btn_pressed:
+                    return True  # 按钮没收到 press（被弹层吃掉）：吞掉，别重开
+                self._speed_btn_pressed = False
         if self._title_renaming and event.type() == QEvent.MouseButtonPress:
             # 编辑期间装的是应用级过滤器：点别处（画面/按钮/标题栏）即收起并提交。
             # 只靠 editingFinished 不管用——舞台控件都是 NoFocus，点了焦点也不转移。
@@ -977,8 +1023,11 @@ class PlayerPage(QWidget):
         )
 
     def add_bookmark(self) -> None:
-        """弹出右侧输入框；点保存才写入（时间 + 内容键值对），取消丢弃。"""
+        """点一下弹出输入框，再点一下关闭（丢弃这次输入）；保存才写库。"""
         if self.store is None or not self.has_media or self.current_path is None:
+            return
+        if self.bookmarkPopup.isVisible():
+            self.bookmarkPopup.cancel()
             return
         if self.engine.duration <= 0:
             return

@@ -4,6 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import QPropertyAnimation, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
@@ -71,7 +72,7 @@ class Drawer(QWidget):
         self.info = QWidget(self)
         self.infoLayout = QVBoxLayout(self.info)
         self.infoLayout.setContentsMargins(0, 4, 0, 0)
-        self.infoLayout.setSpacing(6)
+        self.infoLayout.setSpacing(12)
         self.infoLayout.setAlignment(Qt.AlignTop)
         for widget in (self.playlist, self.bookmarks):
             widget.setStyleSheet(
@@ -116,6 +117,9 @@ class Drawer(QWidget):
             for index in range(len(entries)):
                 self._style_playlist_item(index, index == current)
             self._playlist_current = current
+            if self.isVisible():
+                # 列表被重建会把滚动位置清零：开着抽屉时补滚回当前文件
+                self._scroll_to_current()
             return
         previous = getattr(self, '_playlist_current', -1)
         if current != previous:
@@ -169,17 +173,32 @@ class Drawer(QWidget):
             self.bookmarks.addItem(item)
 
     def set_info(self, lines: list[tuple[str, str]]) -> None:
+        """两列信息表：左列小号右对齐弱化标签，右列值（加重/可选中/自动换行）。
+
+        原来是「标签一行、值一行」上下堆叠，四组挤在一起没有层次；文件名与路径
+        这类长串靠 wordWrap 断行，值可鼠标选中复制（路径最需要）。
+        """
         while self.infoLayout.count():
             item = self.infoLayout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
         for key, value in lines:
-            caption = CaptionLabel(key, self.info)
-            body = BodyLabel(value, self.info)
-            body.setWordWrap(True)
-            self.infoLayout.addWidget(caption)
-            self.infoLayout.addWidget(body)
+            row = QWidget(self.info)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(10)
+            caption = CaptionLabel(key, row)
+            caption.setFixedWidth(44)
+            caption.setAlignment(Qt.AlignRight | Qt.AlignTop)
+            value_label = (StrongBodyLabel(value, row) if key == '文件名'
+                           else BodyLabel(value, row))
+            value_label.setWordWrap(True)
+            value_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            row_layout.addWidget(caption, 0)
+            row_layout.addWidget(value_label, 1)
+            self.infoLayout.addWidget(row)
 
     # ---------------- 动画 ----------------
     def target_rect(self) -> QRect:
@@ -202,10 +221,19 @@ class Drawer(QWidget):
         self._target_visible = True
         self.show()
         self.raise_()
+        # 打开时预先滚到当前文件（切换文件不重滚，别打断用户自己翻列表）
+        self._scroll_to_current()
         self._animation.stop()
         self._animation.setStartValue(start)
         self._animation.setEndValue(rect)
         self._animation.start()
+
+    def _scroll_to_current(self) -> None:
+        index = getattr(self, '_playlist_current', -1)
+        if 0 <= index < self.playlist.count():
+            self.playlist.scrollToItem(
+                self.playlist.item(index), QAbstractItemView.PositionAtCenter
+            )
 
     def hide_drawer(self) -> None:
         if not self.isVisible():
