@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from qfluentwidgets import (
     FluentWindow,
     FluentIcon,
@@ -48,13 +48,9 @@ class FeelWindow(FluentWindow):
 
         self.playerPage = PlayerPage(self)
         self.shelfPage = ShelfPage(self)
-        self.settingsPage = SettingsPage(self)
-        self.helpPage = HelpPage(self)
 
         self.playerPage.setObjectName('playerPage')
         self.shelfPage.setObjectName('shelfPage')
-        self.settingsPage.setObjectName('settingsPage')
-        self.helpPage.setObjectName('helpPage')
 
         self.registry = ActionRegistry(self)
         # 页面/帮助页要按动作实时取键位（tooltip、键帽显示自定义键）
@@ -73,18 +69,11 @@ class FeelWindow(FluentWindow):
         self._nav['goto_shelf'] = self.addSubInterface(
             self.shelfPage, FluentIcon.PHOTO, '资料库', NavigationItemPosition.TOP
         )
-        self._nav['goto_settings'] = self.addSubInterface(
-            self.settingsPage, FluentIcon.SETTING, '设置', NavigationItemPosition.SCROLL
-        )
-        self._nav['goto_help'] = self.addSubInterface(
-            self.helpPage, FluentIcon.HELP, '帮助', NavigationItemPosition.SCROLL
-        )
 
         PAGE_CONTEXT.update(
             {
                 self.playerPage: PLAYER,
                 self.shelfPage: SHELF,
-                self.settingsPage: SETTINGS,
             }
         )
 
@@ -111,9 +100,6 @@ class FeelWindow(FluentWindow):
         cfg.ocrEnabled.valueChanged.connect(self.shelfPage.set_search_visible)
         self.shelfPage.set_search_visible(cfg.ocrEnabled.value)
 
-        self._build_actions()
-        # 帮助页键帽在动作全部注册后构建，改键时靠 shortcutsChanged 刷新
-        self.helpPage.bind_registry(self.registry)
         # 主题卡片等直接改 cfg.themeMode 的路径：主题翻转后重刷 QSS。
         # 重刷前先暂停正在播放的媒体：Qt6 FFmpeg 下音频播放中做全局 QSS 重刷
         # 会死锁（本机稳定复现，见 SPEC 已知问题），暂停到位后再刷，刷完恢复。
@@ -128,6 +114,28 @@ class FeelWindow(FluentWindow):
         cfg.seekStep.valueChanged.connect(lambda _v: self._refresh_tooltips())
         cfg.volumeStep.valueChanged.connect(self._on_volume_step_changed)
         self._on_volume_step_changed(cfg.volumeStep.value)
+        # 重活挪到首帧后：设置/帮助页 + 动作注册约 650ms（冷启动更多），
+        # 窗口先出壳，首个事件循环回合再填（QTimer.singleShot 见 _build_side_pages）
+        QTimer.singleShot(0, self._build_side_pages)
+
+    def _build_side_pages(self) -> None:
+        """首帧后补：设置/帮助页 + 导航 + 动作注册 + tooltip + 完成日志。
+
+        必须先建 settingsPage 再 _build_actions（bind toggle_theme 要 themeCard），
+        且 helpPage.bind_registry 要在动作全部注册后。
+        """
+        self.settingsPage = SettingsPage(self)
+        self.helpPage = HelpPage(self)
+        self._nav['goto_settings'] = self.addSubInterface(
+            self.settingsPage, FluentIcon.SETTING, '设置', NavigationItemPosition.SCROLL
+        )
+        self._nav['goto_help'] = self.addSubInterface(
+            self.helpPage, FluentIcon.HELP, '帮助', NavigationItemPosition.SCROLL
+        )
+        PAGE_CONTEXT[self.settingsPage] = SETTINGS
+        self._build_actions()
+        # 帮助页键帽在动作全部注册后构建，改键时靠 shortcutsChanged 刷新
+        self.helpPage.bind_registry(self.registry)
         self._refresh_tooltips()
         log.info('窗口初始化完成：%d 个动作', len(self.registry.actions))
 

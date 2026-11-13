@@ -111,9 +111,27 @@ class PlayerPage(QWidget):
         self._speed_menu_hide_recent = False  # 菜单刚被关（aboutToHide 余温）
         self.zoomChanged = None  # 保持类型提示友好；实际用 _update_zoom_label
 
-        self.engine = MediaEngine(self)
+        self._engine: MediaEngine | None = None
         self._build_ui()
-        self._wire_engine()
+
+    @property
+    def engine(self) -> MediaEngine:
+        """惰性创建：首次打开音视频才构造 QMediaPlayer（省启动 ~400ms + FFmpeg 探测）。"""
+        if self._engine is None:
+            self._engine = MediaEngine(self)
+            self._wire_engine()
+        return self._engine
+
+    @property
+    def videoItem(self) -> QGraphicsVideoItem:
+        """惰性创建：QGraphicsVideoItem() 会触发 QtMultimedia FFmpeg 后端探测（exe 里 ~500ms）。"""
+        if self._videoItem is None:
+            self._videoItem = QGraphicsVideoItem()
+            self._videoItem.setAspectRatioMode(Qt.KeepAspectRatio)
+            # 创建晚于首次 resize：补设当前视口尺寸（resizeEvent 只管之后的）
+            self._videoItem.setSize(self.videoView.viewport().size())
+            self.scene.addItem(self._videoItem)
+        return self._videoItem
 
     # ---------------- UI ----------------
     def _build_ui(self) -> None:
@@ -165,9 +183,7 @@ class PlayerPage(QWidget):
         self.videoView.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.videoView.setStyleSheet('QGraphicsView{background:#000}')
         self.scene = QGraphicsScene(self.videoView)
-        self.videoItem = QGraphicsVideoItem()
-        self.videoItem.setAspectRatioMode(Qt.KeepAspectRatio)
-        self.scene.addItem(self.videoItem)
+        self._videoItem: QGraphicsVideoItem | None = None
         self.videoView.setScene(self.scene)
         # 单曲播完复位时 FFmpeg 后端不出首帧（黑屏），用取帧快照顶住画面
         self.frameHold = QLabel(self.videoView.viewport())
@@ -674,8 +690,10 @@ class PlayerPage(QWidget):
         rate = float(cfg.speed.value)
         try:
             if entry.kind == IMAGE:
-                self.engine.set_video_output(None)
-                self.engine.stop()
+                if self._engine is not None:
+                    # 图片不需要播放器；只有曾开过音视频才需要停掉/摘 sink
+                    self.engine.set_video_output(None)
+                    self.engine.stop()
                 self._show_image(entry.path)
             elif entry.kind == VIDEO:
                 self.engine.set_video_output(self.videoItem)
@@ -1212,7 +1230,9 @@ class PlayerPage(QWidget):
         self.engine.seek(ms)
 
     def _on_volume_changed(self, volume: int) -> None:
-        self.engine.set_volume(volume)
+        if self._engine is not None:
+            self.engine.set_volume(volume)
+        # 无媒体时不建 engine：惰性创建时 _wire_engine 会用 volumeBtn 的值补同步
         self.volumeOsd.show_level(volume)
 
     def _action_keys(self, action_id: str, default: str = '') -> str:
