@@ -42,6 +42,9 @@ class ImageStage(QLabel):
     def set_pan(self, x: float, y: float) -> None:
         self._pan = QPointF(x, y)
         self.clamp_pan()
+        # 必须无条件重绘：clamp_pan 只在「钳位改变值」时 update，
+        # 边界内拖动会改 _pan 却不刷新 → 画面冻结（表现为只能沿贴边那轴拖）
+        self.update()
 
     def clamp_pan(self) -> None:
         """边界约束：放大后的图最多拖到边缘贴住视口，不能拖出空白。"""

@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 import os  # noqa: E402
 os.environ['APPDATA'] = 'C:/tmp/scratch/feel-phase4/appdata'
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -91,6 +91,18 @@ def main() -> int:
     assert page.imageLabel.cursor().shape() == Qt.OpenHandCursor
     start = QPointF(page.imageLabel.width() / 2, page.imageLabel.height() / 2)
     end = start - QPointF(60, 40)
+    # 边界内拖动必须触发重绘（set_pan 曾只改状态不 update → 画面冻结，
+    # 表现为只能沿已贴边的轴拖）：数拖动期间的 Paint 事件
+    paints = {'n': 0}
+
+    class _PaintCounter(QObject):
+        def eventFilter(self, obj, ev):
+            if ev.type() == QEvent.Paint:
+                paints['n'] += 1
+            return False
+
+    counter = _PaintCounter(page.imageLabel)
+    page.imageLabel.installEventFilter(counter)
     for event_type, point, button, buttons in (
         (QEvent.MouseButtonPress, start, Qt.LeftButton, Qt.LeftButton),
         (QEvent.MouseMove, end, Qt.NoButton, Qt.LeftButton),
@@ -101,6 +113,8 @@ def main() -> int:
                             button, buttons, Qt.NoModifier)
         QApplication.sendEvent(page.imageLabel, event)
     QTest.qWait(50)
+    page.imageLabel.removeEventFilter(counter)
+    assert paints['n'] > 0, f'边界内拖动未重绘 paints={paints["n"]}'
     pan = page.imageLabel.pan
     assert pan.x() < 0 and pan.y() < 0, pan
     page.reset_zoom()
