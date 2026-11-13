@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QRunnable, QSize, QThreadPool, Qt, Signal
 from PySide6.QtGui import QImage, QImageReader
 
 from .config import THUMB_DIR
+from .imageio import load_image
 
 THUMB_SIZE = QSize(320, 180)
 
@@ -29,7 +30,14 @@ def load_image_thumb(path: Path) -> QImage:
     size = reader.size()
     if size.isValid():
         reader.setScaledSize(size.scaled(THUMB_SIZE, Qt.KeepAspectRatio))
-    return reader.read()
+    image = reader.read()
+    if not image.isNull():
+        return image
+    # Qt 解不了的格式（AVIF）走 Pillow 兜底，再缩到缩略图尺寸
+    image = load_image(path)
+    if image.isNull():
+        return image
+    return image.scaled(THUMB_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
 def load_video_thumb(path: Path) -> QImage:

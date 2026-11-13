@@ -44,6 +44,7 @@ from qfluentwidgets import (
 
 from ...config import PLAY_MODE_TEXTS, PLAY_MODES, SPEEDS, cfg
 from ...frameprobe import FrameGrabber
+from ...imageio import load_image
 from ...logs import logger
 from ...player import MediaEngine
 from qfluentwidgets.common.screen import getCurrentScreenGeometry
@@ -728,7 +729,7 @@ class PlayerPage(QWidget):
             self._movie = movie
             movie.start()
         else:
-            pixmap = QPixmap(str(path))
+            pixmap = QPixmap.fromImage(load_image(path))
             if pixmap.isNull():
                 self._on_error(f'无法解码图片：{path.name}')
                 return

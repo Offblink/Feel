@@ -2,3 +2,5 @@
 PySide6-Fluent-Widgets==1.11.3
 PySideSix-Frameless-Window==0.8.2
 darkdetect==0.8.0
+# AVIF 解码靠 Pillow>=12 原生 PIL._avif（Qt 没带 qavif 插件，imageio.py 走 Pillow 兜底）
+pillow>=12

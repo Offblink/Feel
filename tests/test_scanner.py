@@ -15,6 +15,7 @@ class ScannerTest(unittest.TestCase):
         self.assertEqual(media_kind('a.JPG'), 'image')
         self.assertEqual(media_kind('b.mp4'), 'video')
         self.assertEqual(media_kind('c.m4a'), 'audio')
+        self.assertEqual(media_kind('d.avif'), 'image')
         self.assertIsNone(media_kind('d.txt'))
         self.assertIsNone(media_kind('Makefile'))
 
