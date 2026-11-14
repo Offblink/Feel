@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QMovie, QPixmap, QTransform
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
@@ -107,6 +107,10 @@ class PlayerPage(QWidget):
         self._hold_active = False
         self._hold_image = None
         self._skip_video_click = False
+        # 视频拖拽平移（FR-08 视频侧）：原处点击=播放/暂停，超过拖拽阈值的移动=平移
+        self._video_drag_origin: QPointF | None = None
+        self._video_drag_base = QPointF(0.0, 0.0)
+        self._video_dragged = False
         self._speed_menu_was_open = False    # 本次点击是在「关菜单」
         self._speed_menu_hide_recent = False  # 菜单刚被关（aboutToHide 余温）
         self.zoomChanged = None  # 保持类型提示友好；实际用 _update_zoom_label
@@ -557,14 +561,45 @@ class PlayerPage(QWidget):
                         self.zoom_by(ZOOM_STEP if delta > 0 else 1 / ZOOM_STEP)
                     event.accept()
                     return True
+            elif event.type() == QEvent.MouseButtonPress:
+                # 视频：记录手势起点，超过拖拽阈值才算拖动（否则松手=点击暂停）
+                if (obj is self.videoView.viewport()
+                        and event.button() == Qt.LeftButton
+                        and self.current_kind == VIDEO
+                        and self._can_video_pan()):
+                    self._video_drag_origin = event.position()
+                    self._video_drag_base = self.videoItem.pos()
+                    self._video_dragged = False
+                    self._sync_video_cursor()
+                    event.accept()
+                    return True
+            elif event.type() == QEvent.MouseMove:
+                if (obj is self.videoView.viewport()
+                        and self._video_drag_origin is not None
+                        and event.buttons() & Qt.LeftButton):
+                    delta = event.position() - self._video_drag_origin
+                    if not self._video_dragged:
+                        if delta.manhattanLength() < QApplication.startDragDistance():
+                            event.accept()
+                            return True
+                        self._video_dragged = True
+                    self.videoItem.setPos(self._video_drag_base + delta)
+                    self._clamp_video_pan()
+                    event.accept()
+                    return True
             elif event.type() == QEvent.MouseButtonRelease:
-                # 点视频画面 = 播放/暂停（双击的第二次 release 由 dblclick 标记吃掉）
+                # 视频：原处点击 = 播放/暂停；拖动过阈值 = 只平移不切换
+                # （双击的第二次 release 由 dblclick 标记吃掉）
                 if (obj is self.videoView.viewport()
                         and event.button() == Qt.LeftButton
                         and self.current_kind == VIDEO):
-                    if self._skip_video_click:
-                        self._skip_video_click = False
-                    else:
+                    dragged = self._video_dragged
+                    skip = self._skip_video_click
+                    self._video_drag_origin = None
+                    self._video_dragged = False
+                    self._skip_video_click = False
+                    self._sync_video_cursor()
+                    if not dragged and not skip:
                         self.toggle_play()
                     event.accept()
                     return True
@@ -671,6 +706,8 @@ class PlayerPage(QWidget):
         self._zoom = 1.0
         self._rotation = self._load_rotation(entry.path)
         self.imageLabel.reset_pan()
+        self._video_drag_origin = None
+        self._video_dragged = False
 
         self.seekBar.reset()
         self._stop_movie()
@@ -698,6 +735,7 @@ class PlayerPage(QWidget):
             elif entry.kind == VIDEO:
                 self.engine.set_video_output(self.videoItem)
                 self.stageStack.setCurrentWidget(self.videoView)
+                self._apply_video_transform()
                 self.engine.load(entry.path)
                 self.engine.set_playback_rate(rate)
                 self.engine.play()
@@ -789,6 +827,36 @@ class PlayerPage(QWidget):
         self.videoItem.setTransformOriginPoint(rect.center())
         self.videoItem.setRotation(self._rotation)
         self.videoItem.setScale(self._zoom)
+        self._clamp_video_pan()
+        self._sync_video_cursor()
+
+    def _video_pan_limits(self) -> tuple[float, float]:
+        """视频可平移的对称半径：视觉尺寸（缩放+旋转后）超出视口的部分对半分。"""
+        rect = self.videoItem.sceneBoundingRect()
+        vp = self.videoView.viewport().size()
+        return (max(0.0, (rect.width() - vp.width()) / 2),
+                max(0.0, (rect.height() - vp.height()) / 2))
+
+    def _clamp_video_pan(self) -> None:
+        limit_x, limit_y = self._video_pan_limits()
+        pos = self.videoItem.pos()
+        self.videoItem.setPos(
+            min(max(pos.x(), -limit_x), limit_x),
+            min(max(pos.y(), -limit_y), limit_y),
+        )
+
+    def _can_video_pan(self) -> bool:
+        limit_x, limit_y = self._video_pan_limits()
+        return limit_x > 0.5 or limit_y > 0.5
+
+    def _sync_video_cursor(self) -> None:
+        if not self._can_video_pan():
+            shape = Qt.ArrowCursor
+        elif self._video_drag_origin is not None:
+            shape = Qt.ClosedHandCursor
+        else:
+            shape = Qt.OpenHandCursor
+        self.videoView.viewport().setCursor(shape)
 
     # ---------------- 缩放 / 旋转（FR-07/08）----------------
     def zoom_by(self, factor: float) -> None:

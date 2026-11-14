@@ -172,6 +172,38 @@ def main() -> int:
     window.grab().save(str(OUT / 'window_video_rotated.png'))
     print('video rotate/zoom OK (persisted)')
 
+    # 放大后拖拽平移：拖动过阈值只平移不切换播放；原处点击仍切换（FR-08 视频侧）
+    page.set_mode('one')  # 2s 短片防播完自动切走
+    page.open_path(MEDIA / 'video.mp4')
+    QTest.qWait(600)
+    assert page.current_kind == 'video'
+    page.engine.pause()
+    QTest.qWait(100)
+    assert not page.engine.is_playing
+    page.zoom_by(4.0)
+    QTest.qWait(50)
+    vp = page.videoView.viewport()
+    assert vp.cursor().shape() == Qt.OpenHandCursor, '放大后视频应显示张手'
+    start = QPointF(vp.width() / 2, vp.height() / 2)
+    end = start - QPointF(80, 50)
+    for event_type, point, button, buttons in (
+        (QEvent.MouseButtonPress, start, Qt.LeftButton, Qt.LeftButton),
+        (QEvent.MouseMove, end, Qt.NoButton, Qt.LeftButton),
+        (QEvent.MouseButtonRelease, end, Qt.LeftButton, Qt.NoButton),
+    ):
+        event = QMouseEvent(event_type, point, vp.mapToGlobal(point.toPoint()),
+                            button, buttons, Qt.NoModifier)
+        QApplication.sendEvent(vp, event)
+    QTest.qWait(50)
+    pos = page.videoItem.pos()
+    assert pos.x() < 0 and pos.y() < 0, f'拖拽未平移视频 {pos}'
+    assert not page.engine.is_playing, '拖拽不应切换播放状态'
+    # 原处点击（无位移）= 播放/暂停
+    QTest.mouseClick(vp, Qt.LeftButton)
+    QTest.qWait(300)
+    assert page.engine.is_playing, '放大后原处点击未恢复播放'
+    print('video drag pan / click split OK')
+
     print('SMOKE PHASE4 OK')
     return 0
 
