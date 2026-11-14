@@ -17,7 +17,7 @@ MEDIA = OUT / 'media'
 os.environ['APPDATA'] = str(OUT / 'appdata')
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QMouseEvent  # noqa: E402
+from PySide6.QtGui import QKeyEvent, QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -185,6 +185,15 @@ def main() -> int:
     QTest.qWait(page.SEEK_HOLD_MS + 260)
     assert abs(page.engine.playback_rate - 2.0) < 0.01, page.engine.playback_rate
     assert page.speedBtn.text() == '2×', page.speedBtn.text()
+    # Windows 按键自动重复会成对送来 isAutoRepeat 的 KeyRelease（实测每拍一个）：
+    # 长按倍速不能被它打回 1×（用户报「一开始变了倍速，很快又回到 1×」）
+    auto_release = QKeyEvent(
+        QEvent.KeyRelease, Qt.Key_Right, Qt.NoModifier, '', True)
+    QApplication.sendEvent(window, auto_release)
+    QTest.qWait(120)
+    assert abs(page.engine.playback_rate - 2.0) < 0.01, \
+        f'自动重复的 release 把倍速打回去了：{page.engine.playback_rate}'
+    assert page._seek_hold_direction == 1, page._seek_hold_direction
     QTest.qWait(350)
     pos_held = page.engine.position
     QTest.keyRelease(window, Qt.Key_Right)

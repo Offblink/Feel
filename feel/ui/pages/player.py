@@ -5,6 +5,7 @@ Phase 4：缩放（滚轮/按钮/100%）、旋转 ±90°（图片/视频）、�
 """
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -63,6 +64,15 @@ from ...ui.widgets.volume_button import VolumeButton
 from ...ui.widgets.volume_osd import VolumeOsd
 
 ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 0.1, 8.0, 1.1
+
+# Qt 键 → Windows 虚拟键（长按变速判断「真的松开了没有」用；字母/数字的
+# Qt 键值就是 ASCII，代码里单独兜底）
+VK_BY_QT_KEY = {
+    Qt.Key_Left: 0x25, Qt.Key_Up: 0x26, Qt.Key_Right: 0x27, Qt.Key_Down: 0x28,
+    Qt.Key_Home: 0x24, Qt.Key_End: 0x23, Qt.Key_PageUp: 0x21, Qt.Key_PageDown: 0x22,
+    Qt.Key_Insert: 0x2D, Qt.Key_Delete: 0x2E, Qt.Key_Space: 0x20,
+    Qt.Key_Return: 0x0D, Qt.Key_Enter: 0x0D, Qt.Key_Tab: 0x09, Qt.Key_Backspace: 0x08,
+}
 
 
 class _VideoView(QGraphicsView):
@@ -547,11 +557,16 @@ class PlayerPage(QWidget):
     # ---------------- 事件 ----------------
     def eventFilter(self, obj, event):
         # 应用级过滤器只管长按变速的收尾（KeyRelease / 窗口失焦）：
-        # 按下那一下已经被 QShortcut 先吃掉，这里只负责「是短按还是长按」
+        # 按下那一下已经被 QShortcut 先吃掉，这里只负责「是短按还是长按」。
+        # **Windows 的按键自动重复会成对送来 isAutoRepeat 的 KeyRelease**（实测：
+        # 按住约 0.5s 后每拍一个 autorep release），把它当真松开就会把长按倍速
+        # 打回 1×——用户报「一开始变了倍速，很快又回到 1×」的根子。只认真正的松开。
         if event.type() == QEvent.KeyRelease:
-            direction = self._seek_direction_for(event)
-            if direction and direction == self._seek_hold_direction:
-                self._finish_seek_key()
+            if (not event.isAutoRepeat()
+                    and not self._key_physically_down(event)):
+                direction = self._seek_direction_for(event)
+                if direction and direction == self._seek_hold_direction:
+                    self._finish_seek_key()
         elif event.type() == QEvent.WindowDeactivate and obj is self.window():
             self._finish_seek_key()
         elif event.type() == QEvent.ApplicationDeactivate:
@@ -1072,6 +1087,29 @@ class PlayerPage(QWidget):
             return
         if apply_tap:
             self.step_seek(direction * cfg.seekStep.value)
+
+    def _key_physically_down(self, event) -> bool:
+        """按键是否仍被物理按住（Windows 自动重复期间的事件噪音兜底）。
+
+        实测：按住方向键时 Qt 除了送 isAutoRepeat 的 KeyRelease，还会夹送
+        「看起来正常」的 KeyRelease；只靠 isAutoRepeat 判断会误结束长按。
+        GetAsyncKeyState 读的是真实键状态，能区分「重复噪音」和「真松开」。
+        取不到虚拟键/非 Windows 时按事件本身判断（返回 False = 可以结束）。
+        """
+        if sys.platform != 'win32':
+            return False
+        key = event.key()
+        vk = VK_BY_QT_KEY.get(key)
+        if vk is None:
+            if Qt.Key_A <= key <= Qt.Key_Z or Qt.Key_0 <= key <= Qt.Key_9:
+                vk = int(key)
+            else:
+                return False
+        try:
+            import ctypes
+            return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+        except Exception:  # noqa: BLE001 - 取不到就退回事件语义
+            return False
 
     def _seek_direction_for(self, event) -> int:
         """KeyRelease 对应哪个 seek 动作（按改绑后的当前键位匹配）。"""
