@@ -14,6 +14,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from feel.app import FeelWindow  # noqa: E402
+from feel.ui.widgets.frame_preview import TIME_BAR_H  # noqa: E402
 from feel.config import cfg  # noqa: E402
 from feel.ui.widgets.theme_transition import ThemeTransitionOverlay  # noqa: E402
 from tools.gen_test_media import main as gen_media  # noqa: E402
@@ -58,7 +59,17 @@ def main() -> int:
     slider.hovered.emit(1000, hover_pos)
     assert wait_for(lambda: page.preview.isVisible(), 3000), '预览未显示'
     assert page.preview._image is not None, '视频预览无帧'
-    assert not hasattr(page.preview, '_text'), '预览不应再有时间码'
+    assert page.preview._time_ms == 1000, page.preview._time_ms
+    # 底部时间条要真的画出「几分几秒」：取底部 24px 里的亮像素（文字）计数
+    grab = page.preview.grab().toImage()
+    bar_top = grab.height() - TIME_BAR_H
+    bright = 0
+    for yy in range(bar_top, grab.height()):
+        for xx in range(grab.width()):
+            color = grab.pixelColor(xx, yy)
+            if color.red() > 150 and color.green() > 150 and color.blue() > 150:
+                bright += 1
+    assert bright > 20, f'预览底部没有画出时间文本：亮像素 {bright}'
     slider.hoverLeft.emit()
     QTest.qWait(100)
     assert not page.preview.isVisible(), '离开后预览未隐藏'

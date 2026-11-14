@@ -1267,7 +1267,7 @@ class PlayerPage(QWidget):
         if image is None or image.isNull():
             self.preview.hide()
             return
-        self.preview.set_content(image)
+        self.preview.set_content(image, self._hover_ms)
         self.preview.show_at(self._hover_pos)
 
     # ---- 收藏 / 书签 / 抽屉（FR-13/14）----
