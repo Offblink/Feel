@@ -25,6 +25,7 @@ class VolumeOsd(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setFixedSize(176, 80)
         self._level = 50
+        self._muted = False
 
         self._effect = QGraphicsOpacityEffect(self)
         self._effect.setOpacity(0.0)
@@ -38,8 +39,9 @@ class VolumeOsd(QWidget):
         self.hide()
 
     # ---- 显示 ----
-    def show_level(self, level: int) -> None:
+    def show_level(self, level: int, muted: bool = False) -> None:
         self._level = max(0, min(100, int(level)))
+        self._muted = bool(muted)
         self.reposition()
         self.update()
         self.show()
@@ -87,15 +89,15 @@ class VolumeOsd(QWidget):
         painter.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 14, 14)
 
         fg = QColor(245, 245, 245) if dark else QColor(28, 28, 28)
-        icon = FluentIcon.VOLUME.icon(fg).pixmap(30, 30)
-        painter.drawPixmap(18, (self.height() - 30) // 2 - 6, icon)
+        icon = (FluentIcon.MUTE if self._muted else FluentIcon.VOLUME).icon(fg)
+        painter.drawPixmap(18, (self.height() - 30) // 2 - 6, icon.pixmap(30, 30))
 
         font = painter.font()
         font.setPixelSize(16)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(fg)
-        text = '静音' if self._level == 0 else f'音量 {self._level}%'
+        text = '静音' if self._muted or self._level == 0 else f'音量 {self._level}%'
         painter.drawText(QRect(58, 6, self.width() - 70, 30),
                          Qt.AlignVCenter | Qt.AlignLeft, text)
 
@@ -104,7 +106,8 @@ class VolumeOsd(QWidget):
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(255, 255, 255, 46) if dark else QColor(0, 0, 0, 30))
         painter.drawRoundedRect(track, 2.5, 2.5)
+        level = 0 if self._muted else self._level
         filled = QRectF(track.left(), track.top(),
-                        track.width() * self._level / 100.0, track.height())
+                        track.width() * level / 100.0, track.height())
         painter.setBrush(_accent())
         painter.drawRoundedRect(filled, 2.5, 2.5)

@@ -22,6 +22,7 @@ class MediaEngine(QObject):
         self._audio = QAudioOutput(self)
         self._player.setAudioOutput(self._audio)
         self._volume = 80
+        self._muted = False
         self._pause_on_ready = False
         self._pause_scheduled = False
         self._audio.setVolume(self._volume / 100.0)
@@ -98,6 +99,11 @@ class MediaEngine(QObject):
         self._volume = max(0, min(100, int(volume)))
         self._audio.setVolume(self._volume / 100.0)
 
+    def set_muted(self, muted: bool) -> None:
+        """静音只关输出，不丢音量值：取消静音立即回到原音量。"""
+        self._muted = bool(muted)
+        self._audio.setMuted(self._muted)
+
     def set_playback_rate(self, rate: float) -> None:
         """播放速度倍率（Qt6 FFmpeg 后端实测支持 0.5×–2×，音频同步变调变速）。"""
         self._player.setPlaybackRate(float(rate))
@@ -122,6 +128,10 @@ class MediaEngine(QObject):
     @property
     def volume(self) -> int:
         return self._volume
+
+    @property
+    def is_muted(self) -> bool:
+        return self._muted
 
     # ---- 信号转发 ----
     def _on_state_changed(self, state) -> None:

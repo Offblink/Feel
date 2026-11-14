@@ -174,19 +174,25 @@ class FeelWindow(FluentWindow):
         )
         # ←/→ 归属按媒体状态互斥（active_when 门控 QShortcut）：
         # 视频里 ←/→ 快进快退、Ctrl+←/→ 切文件；图片/音频/未打开里 ←/→ 直接切文件。
+        # 方向键后退/前进走 page.begin_seek_key：短按=±N 秒，长按=临时 0.5×/2×。
+        # auto_repeat=False：按住时的自动重复不能再触发 seek（长按归变速）。
         r.register(
             Action('seek_back', '后退', 'Left', FluentIcon.CARE_LEFT_SOLID,
                    context=PLAYER, handler=lambda: page.step_seek(-cfg.seekStep.value),
+                   key_handler=lambda: page.begin_seek_key(-1),
                    enabled_when=lambda: page.has_media,
                    active_when=lambda seq: seq not in ARROW_KEYS
-                   or page.current_kind == VIDEO)
+                   or page.current_kind == VIDEO,
+                   auto_repeat=False)
         )
         r.register(
             Action('seek_forward', '前进', 'Right', FluentIcon.CARE_RIGHT_SOLID,
                    context=PLAYER, handler=lambda: page.step_seek(cfg.seekStep.value),
+                   key_handler=lambda: page.begin_seek_key(1),
                    enabled_when=lambda: page.has_media,
                    active_when=lambda seq: seq not in ARROW_KEYS
-                   or page.current_kind == VIDEO)
+                   or page.current_kind == VIDEO,
+                   auto_repeat=False)
         )
         r.register(
             Action('volume_up', '音量+', 'Up', FluentIcon.VOLUME,

@@ -49,8 +49,14 @@ class Action:
     context: str = GLOBAL
     enabled_when: Optional[Callable[[], bool]] = None
     handler: Optional[Callable[[], None]] = None
+    # 快捷键按下时的专用执行器（默认为 handler）。方向键后退/前进用它：
+    # 按键要区分短按/长按，而程序调用 trigger() 仍走 handler 立即执行
+    key_handler: Optional[Callable[[], None]] = None
     extra_shortcuts: tuple[str, ...] = ()
     active_when: Optional[Callable[[str], bool]] = None
+    # 按住键时是否重复触发。方向键后退/前进靠它关掉自动重复：
+    # 长按归「临时倍速」，不能每一拍都再触发一次 seek
+    auto_repeat: bool = True
 
     def shortcuts(self) -> tuple[str, ...]:
         # 主键可能与别名撞成同一个键（改绑时），去重保证一个键只建一个 QShortcut
@@ -86,7 +92,10 @@ class ActionRegistry(QObject):
     def _make_shortcut(self, action: Action, sequence: str) -> QShortcut:
         shortcut = QShortcut(QKeySequence(sequence), self._window)
         shortcut.setContext(Qt.ApplicationShortcut)
-        shortcut.activated.connect(lambda aid=action.id: self.trigger(aid))
+        shortcut.setAutoRepeat(action.auto_repeat)
+        shortcut.activated.connect(
+            lambda aid=action.id: self.trigger(aid, from_key=True)
+        )
         shortcut.setEnabled(self._shortcut_enabled(action, sequence))
         self._key_of[shortcut] = sequence
         return shortcut
@@ -158,15 +167,16 @@ class ActionRegistry(QObject):
         return hits
 
     # ---- 执行 ----
-    def trigger(self, action_id: str) -> bool:
+    def trigger(self, action_id: str, from_key: bool = False) -> bool:
         action = self._actions[action_id]
         if not self._allows(action):
             return False
         if action.enabled_when is not None and not action.enabled_when():
             return False
-        if action.handler is None:
+        handler = action.key_handler if from_key and action.key_handler else action.handler
+        if handler is None:
             return False
-        action.handler()
+        handler()
         return True
 
     def action(self, action_id: str) -> Action:

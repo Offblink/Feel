@@ -198,9 +198,9 @@ def main() -> int:
     pos = page.videoItem.pos()
     assert pos.x() < 0 and pos.y() < 0, f'拖拽未平移视频 {pos}'
     assert not page.engine.is_playing, '拖拽不应切换播放状态'
-    # 原处点击（无位移）= 播放/暂停
+    # 原处点击（无位移）= 播放/暂停。单击要等过双击间隔才兑现（双击=全屏不暂停）
     QTest.mouseClick(vp, Qt.LeftButton)
-    QTest.qWait(300)
+    QTest.qWait(QApplication.doubleClickInterval() + 250)
     assert page.engine.is_playing, '放大后原处点击未恢复播放'
     print('video drag pan / click split OK')
 

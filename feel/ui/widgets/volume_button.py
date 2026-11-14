@@ -144,14 +144,16 @@ class VolumePopup(QWidget):
 
 
 class VolumeButton(QWidget):
-    """音量按钮（组合式）：内层 Fluent 按钮 + 悬停弹层 + 滚轮。"""
+    """音量按钮（组合式）：内层 Fluent 按钮 + 悬停弹层 + 滚轮 + 点击静音。"""
 
     volumeChanged = Signal(int)
+    mutedChanged = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         # 音量读配置初始化（不写死）：上一次调好的值启动即生效
         self._volume = max(0, min(100, int(cfg.volume.value)))
+        self._muted = False
         self._step = 5
         self.setFixedSize(40, 40)
 
@@ -161,6 +163,8 @@ class VolumeButton(QWidget):
         self._button.setFixedSize(40, 40)
         layout.addWidget(self._button)
         self._button.installEventFilter(self)
+        # 点击音量钮 = 静音/取消静音（用户要求）；悬停弹层仍负责拖动调音量
+        self._button.clicked.connect(self.toggle_mute)
 
         self._popup = VolumePopup(self)
         # 弹层滑块有自己的默认 50：不同步的话第一次打开会显示 50 而实际不是
@@ -176,6 +180,10 @@ class VolumeButton(QWidget):
     def volume(self) -> int:
         return self._volume
 
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
     def set_step(self, step: int) -> None:
         self._step = max(1, int(step))
         self._update_tooltip()
@@ -187,11 +195,25 @@ class VolumeButton(QWidget):
         self._update_tooltip()
         cfg.set(cfg.volume, self._volume)  # 持久化：下次启动读回
 
+    def set_muted(self, muted: bool) -> None:
+        muted = bool(muted)
+        if muted == self._muted:
+            return
+        self._muted = muted
+        self._button.setIcon(FluentIcon.MUTE if muted else FluentIcon.VOLUME)
+        self._update_tooltip()
+        self.mutedChanged.emit(muted)
+
+    def toggle_mute(self) -> None:
+        self.set_muted(not self._muted)
+
     def _apply_volume(self, volume: int) -> None:
         volume = max(0, min(100, int(volume)))
         if volume == self._volume:
             return
         self._volume = volume
+        # 主动调音量 = 想听见声音：静音态下拖动/滚轮顺带取消静音
+        self.set_muted(False)
         self._popup.set_value(self._volume)
         self._update_tooltip()
         cfg.set(cfg.volume, self._volume)  # 持久化：拖动/滚轮/按键都走这
@@ -208,7 +230,11 @@ class VolumeButton(QWidget):
     def _update_tooltip(self) -> None:
         up = self._action_key('volume_up', '↑')
         down = self._action_key('volume_down', '↓')
-        text = f'音量 {self._volume}%（悬停拖动 / 滚轮 / {up} {down}）'
+        if self._muted:
+            text = f'已静音（点击取消静音，音量 {self._volume}%）'
+        else:
+            text = (f'音量 {self._volume}%（点击静音；悬停拖动 / 滚轮 / '
+                    f'{up} {down}）')
         self.setToolTip(text)
         self._button.setToolTip(text)
 

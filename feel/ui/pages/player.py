@@ -5,10 +5,11 @@ Phase 4：缩放（滚轮/按钮/100%）、旋转 ±90°（图片/视频）、�
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QMovie, QPixmap, QTransform
+from PySide6.QtGui import QColor, QKeySequence, QMovie, QPixmap, QTransform
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
     QApplication,
@@ -106,7 +107,17 @@ class PlayerPage(QWidget):
         self._render_token = 0
         self._hold_active = False
         self._hold_image = None
-        self._skip_video_click = False
+        # 双击的第二次 release 要吃掉；用时间戳兜底，事件序列不完整时
+        # 不会把下一次正常单击也吞掉
+        self._skip_video_click = 0.0
+        # 单击视频 = 播放/暂停，双击 = 全屏。双击的第一下 release 会先到，
+        # 不能当场 toggle（用户报「双击放大后视频暂停了」）：等到双击间隔
+        # 结束仍没有 dblclick，才把这次单击兑现。
+        self._video_click_fired = False
+        self._video_click_timer = QTimer(self)
+        self._video_click_timer.setSingleShot(True)
+        self._video_click_timer.setInterval(QApplication.doubleClickInterval())
+        self._video_click_timer.timeout.connect(self._on_video_click_timeout)
         # 视频拖拽平移（FR-08 视频侧）：原处点击=播放/暂停，超过拖拽阈值的移动=平移
         self._video_drag_origin: QPointF | None = None
         self._video_drag_base = QPointF(0.0, 0.0)
@@ -115,8 +126,23 @@ class PlayerPage(QWidget):
         self._speed_menu_hide_recent = False  # 菜单刚被关（aboutToHide 余温）
         self.zoomChanged = None  # 保持类型提示友好；实际用 _update_zoom_label
 
+        # 长按 ← / → 临时变速（0.5× / 2×）。QShortcut 在按下就触发（Qt 先过
+        # 快捷键，再送 KeyPress，应用级过滤器看不到那一下），所以快捷键 handler
+        # 只「挂起」seek：短按在 KeyRelease 时后退/前进，超过阈值转成临时倍速，
+        # 松开恢复配置倍速。KeyRelease 走 QApplication 级 eventFilter。
+        self.SEEK_HOLD_MS = 280
+        self._seek_hold_direction = 0
+        self._seek_hold_rate = 0.0
+        self._seek_hold_timer = QTimer(self)
+        self._seek_hold_timer.setSingleShot(True)
+        self._seek_hold_timer.setInterval(self.SEEK_HOLD_MS)
+        self._seek_hold_timer.timeout.connect(self._start_seek_rate)
+
         self._engine: MediaEngine | None = None
         self._build_ui()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
     @property
     def engine(self) -> MediaEngine:
@@ -342,7 +368,10 @@ class PlayerPage(QWidget):
         self.seekBar.slider.setFocusPolicy(Qt.NoFocus)
 
         self.seekBar.seekRequested.connect(self._on_seek_requested)
+        # 开始拖动/按下进度条就收起悬停帧预览（按下后再弹浮层会盖住画面）
+        self.seekBar.slider.sliderPressed.connect(self._on_seek_hover_leave)
         self.volumeBtn.volumeChanged.connect(self._on_volume_changed)
+        self.volumeBtn.mutedChanged.connect(self._on_muted_changed)
         # transport 按钮此前只经 ActionRegistry 绑了 tooltip（快捷键能触发、鼠标点了没反应）
         self.playBtn.clicked.connect(self.toggle_play)
         self.prevBtn.clicked.connect(self.prev_file)
@@ -513,9 +542,20 @@ class PlayerPage(QWidget):
         self.engine.errorOccurred.connect(self._on_error)
         self.engine.mediaEnded.connect(self._on_media_ended)
         self.engine.set_volume(self.volumeBtn.volume)
+        self.engine.set_muted(self.volumeBtn.muted)
 
     # ---------------- 事件 ----------------
     def eventFilter(self, obj, event):
+        # 应用级过滤器只管长按变速的收尾（KeyRelease / 窗口失焦）：
+        # 按下那一下已经被 QShortcut 先吃掉，这里只负责「是短按还是长按」
+        if event.type() == QEvent.KeyRelease:
+            direction = self._seek_direction_for(event)
+            if direction and direction == self._seek_hold_direction:
+                self._finish_seek_key()
+        elif event.type() == QEvent.WindowDeactivate and obj is self.window():
+            self._finish_seek_key()
+        elif event.type() == QEvent.ApplicationDeactivate:
+            self._finish_seek_key()
         if obj is self.speedBtn:
             # press 送达按钮且菜单还开着的时序：当场关掉并记账，_show_speed_menu
             # 见账跳过弹出（弹层吃掉 press 的时序由 clicked 配对门天然覆盖，无需干预）
@@ -562,11 +602,15 @@ class PlayerPage(QWidget):
                     event.accept()
                     return True
             elif event.type() == QEvent.MouseButtonPress:
+                # 新的手势开始：上一轮双击的「吃掉 release」标记不该再影响这次点击
+                # （真实双击的第二次 press 会变成 DblClick 事件，不走这里）
+                self._skip_video_click = 0.0
                 # 视频：记录手势起点，超过拖拽阈值才算拖动（否则松手=点击暂停）
                 if (obj is self.videoView.viewport()
                         and event.button() == Qt.LeftButton
                         and self.current_kind == VIDEO
                         and self._can_video_pan()):
+                    self._video_click_timer.stop()  # 新手势开始：作废待兑现的单击
                     self._video_drag_origin = event.position()
                     self._video_drag_base = self.videoItem.pos()
                     self._video_dragged = False
@@ -594,19 +638,28 @@ class PlayerPage(QWidget):
                         and event.button() == Qt.LeftButton
                         and self.current_kind == VIDEO):
                     dragged = self._video_dragged
-                    skip = self._skip_video_click
+                    # 只吃紧跟双击的那次 release（800ms 内），旧标记不许吞后来的单击
+                    skip = bool(self._skip_video_click) and (
+                        time.monotonic() - self._skip_video_click < 0.8)
                     self._video_drag_origin = None
                     self._video_dragged = False
-                    self._skip_video_click = False
+                    self._skip_video_click = 0.0
                     self._sync_video_cursor()
                     if not dragged and not skip:
-                        self.toggle_play()
+                        self._video_click_fired = False
+                        self._video_click_timer.start()
                     event.accept()
                     return True
             elif event.type() == QEvent.MouseButtonDblClick:
                 if self.current_kind in (IMAGE, VIDEO):
                     if obj is self.videoView.viewport():
-                        self._skip_video_click = True
+                        # 双击：取消第一下单击的暂停/播放，绝不切换播放状态
+                        self._skip_video_click = time.monotonic()
+                        if self._video_click_timer.isActive():
+                            self._video_click_timer.stop()
+                        elif self._video_click_fired:
+                            self._video_click_fired = False
+                            self.toggle_play()
                     self.toggle_fullscreen()
                     event.accept()
                     return True
@@ -618,9 +671,7 @@ class PlayerPage(QWidget):
             return
         self._rename_stem = self.entries[self.index].path.stem
         self._title_renaming = True
-        app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
+        # 应用级过滤器常驻（长按变速收尾也要它），这里不再重复 install
         self.titleEdit.setText(self._rename_stem)
         self.titleEdit.selectAll()
         self.titleLabel.hide()
@@ -645,10 +696,8 @@ class PlayerPage(QWidget):
 
     def _end_title_rename(self) -> None:
         # 先落标志再 hide：hide/clearFocus 会再触发 editingFinished，别二次提交
+        # （应用级过滤器常驻，不在这里摘：摘了长按变速就收不到 KeyRelease）
         self._title_renaming = False
-        app = QApplication.instance()
-        if app is not None:
-            app.removeEventFilter(self)
         self.titleEdit.hide()
         self.titleEdit.clearFocus()
         self.titleLabel.show()
@@ -696,6 +745,9 @@ class PlayerPage(QWidget):
 
     def _prepare_current(self, entry: MediaEntry) -> None:
         self._cancel_title_rename()
+        self._finish_seek_key(apply_tap=False)  # 换文件：临时倍速收掉，不补 seek
+        self._video_click_timer.stop()
+        self._video_click_fired = False
         name = entry.path.name
         self.titleLabel.setText(name)
         self.titleLabel.setToolTip(f'{entry.path}\n点击文件名重命名')
@@ -762,6 +814,9 @@ class PlayerPage(QWidget):
 
     def _clear_stage(self) -> None:
         self._render_token += 1
+        self._finish_seek_key(apply_tap=False)
+        self._video_click_timer.stop()
+        self._video_click_fired = False
         self.busy.hide()
         self.frameHold.hide()
         self.index = -1
@@ -979,10 +1034,69 @@ class PlayerPage(QWidget):
         target = self.engine.position + seconds * 1000
         self.engine.seek(max(0, min(duration, target)))
 
+    # ---- 长按 ←/→ 临时变速（FR-04 扩展）----
+    def begin_seek_key(self, direction: int) -> None:
+        """快捷键按下：先挂起 seek；短按在松开时后退/前进，长按转临时倍速。"""
+        if not self.has_media:
+            return
+        if self._seek_hold_direction == direction:
+            return  # QShortcut 自动重复 / 双键重入
+        if self._seek_hold_direction:
+            self._finish_seek_key(apply_tap=False)
+        self._release_frame_hold()
+        self._seek_hold_direction = direction
+        self._seek_hold_timer.start()
+
+    def _start_seek_rate(self) -> None:
+        if not self._seek_hold_direction or not self.has_media:
+            return
+        rate = 0.5 if self._seek_hold_direction < 0 else 2.0
+        self._seek_hold_rate = rate
+        self.engine.set_playback_rate(rate)
+        self.speedBtn.setText(f'{rate:g}×')
+        self.speedBtn.setToolTip(
+            f'长按临时 {rate:g}×（松开恢复 {float(cfg.speed.value):g}×）')
+
+    def _finish_seek_key(self, apply_tap: bool = True) -> None:
+        """键松开 / 失焦：长按过就恢复配置倍速，否则补上短按的 seek。"""
+        direction = self._seek_hold_direction
+        if not direction:
+            return
+        self._seek_hold_timer.stop()
+        self._seek_hold_direction = 0
+        if self._seek_hold_rate:
+            self._seek_hold_rate = 0.0
+            if self._engine is not None:
+                self.engine.set_playback_rate(float(cfg.speed.value))
+            self._update_speed_button()
+            return
+        if apply_tap:
+            self.step_seek(direction * cfg.seekStep.value)
+
+    def _seek_direction_for(self, event) -> int:
+        """KeyRelease 对应哪个 seek 动作（按改绑后的当前键位匹配）。"""
+        if not self.has_media or not self.isVisible():
+            return 0
+        registry = self.registry
+        if registry is None:
+            return 0
+        actions = registry.actions
+        combined = event.keyCombination().toCombined()
+        for aid, direction in (('seek_back', -1), ('seek_forward', 1)):
+            action = actions.get(aid)
+            if action is None:
+                continue
+            for seq in action.shortcuts():
+                if seq and QKeySequence(seq)[0].toCombined() == combined:
+                    return direction
+        return 0
+
     def step_volume(self, delta: int) -> None:
+        if self.volumeBtn.muted:
+            self.volumeBtn.set_muted(False)  # 调音量 = 想听见声音
         self.engine.set_volume(self.engine.volume + delta)
         self.volumeBtn.set_volume(self.engine.volume)
-        self.volumeOsd.show_level(self.engine.volume)
+        self.volumeOsd.show_level(self.engine.volume, self.volumeBtn.muted)
 
     def next_file(self) -> None:
         target = step_index(len(self.entries), self.index, cfg.playMode.value, +1)
@@ -1077,6 +1191,12 @@ class PlayerPage(QWidget):
         self._hold_active = False
         if self.frameHold.isVisible():
             self.frameHold.hide()
+
+    def _on_video_click_timeout(self) -> None:
+        if self.current_kind != VIDEO:
+            return
+        self._video_click_fired = True
+        self.toggle_play()
 
     def _on_seek_hover(self, ms: int, global_pos: QPoint) -> None:
         if not self.has_media:
@@ -1301,7 +1421,12 @@ class PlayerPage(QWidget):
         if self._engine is not None:
             self.engine.set_volume(volume)
         # 无媒体时不建 engine：惰性创建时 _wire_engine 会用 volumeBtn 的值补同步
-        self.volumeOsd.show_level(volume)
+        self.volumeOsd.show_level(volume, self.volumeBtn.muted)
+
+    def _on_muted_changed(self, muted: bool) -> None:
+        if self._engine is not None:
+            self.engine.set_muted(muted)
+        self.volumeOsd.show_level(self.volumeBtn.volume, muted)
 
     def _action_keys(self, action_id: str, default: str = '') -> str:
         """动作当前键位的显示形态（含帮助页自定义改绑），用于 tooltip/文案。"""
