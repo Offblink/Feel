@@ -20,7 +20,7 @@ from .actions import Action, ActionRegistry, GLOBAL, PLAYER, SHELF, SETTINGS
 from .actions import display_sequence
 from .config import cfg
 from .filedel import move_to_recycle_bin
-from .filemove import move_files, relocate
+from .filemove import move_files
 from .logs import logger
 from .ocr import OcrService
 from .scanner import (
@@ -38,7 +38,6 @@ from .ui.pages.help import HelpPage
 from .ui.pages.settings import SettingsPage
 from .ui.pages.shelf import ShelfPage
 from .ui.widgets.theme_transition import ThemeTransitionOverlay
-from .undoredo import Op, UndoStack
 
 PAGE_CONTEXT = {}
 log = logger()
@@ -89,7 +88,6 @@ class FeelWindow(FluentWindow):
 
         # 页面联动：播放页队列变化 -> 资料库刷新；资料库动作 -> 播放页/窗口
         self.store = Store()
-        self.undoStack = UndoStack(self)
         self.ocr = OcrService(self.store, self)
         self._ocr_signature = None
         self.ocr.textReady.connect(self.shelfPage.set_ocr_text)
@@ -100,7 +98,8 @@ class FeelWindow(FluentWindow):
             lambda: self.shelfPage.set_favorites(self.store.favorite_paths())
         )
         self.shelfPage.favoriteToggled.connect(
-            lambda entry: self.toggle_favorite(entry.path)
+            lambda item: self.toggle_favorite(
+                item.path if isinstance(item, MediaEntry) else item)
         )
         self.shelfPage.openRequested.connect(self.open_path)
         self.shelfPage.deleteRequested.connect(self.delete_paths)
@@ -108,12 +107,9 @@ class FeelWindow(FluentWindow):
         self.shelfPage.renameRequested.connect(self.rename_file)
         self.shelfPage.refreshRequested.connect(self.refresh_library)
         self.shelfPage.sortModeChanged.connect(self._apply_sort)
-        # 目录导航 / 移入 / 撤销重做（SPEC §11 FR-27~32）
+        # 目录导航 / 移入（SPEC §11 FR-27~32）
         self.shelfPage.folderChanged.connect(self._on_folder_changed)
         self.shelfPage.moveRequested.connect(self.move_to_folder)
-        self.shelfPage.undoRequested.connect(self.undo_action)
-        self.shelfPage.redoRequested.connect(self.redo_action)
-        self.undoStack.changed.connect(self._on_undo_changed)
         cfg.ocrEnabled.valueChanged.connect(self.shelfPage.set_search_visible)
         self.shelfPage.set_search_visible(cfg.ocrEnabled.value)
 
@@ -293,7 +289,7 @@ class FeelWindow(FluentWindow):
             Action('rescan_ocr', '刷新', 'F5', FluentIcon.SYNC,
                    context=SHELF, handler=self.refresh_library)
         )
-        # 目录导航与撤销（SPEC §11）：返回/前进 = 历史栈，撤销/重做 = 路径对栈
+        # 目录导航（SPEC §11）：返回/前进 = 历史栈
         r.register(
             Action('nav_back', '返回', 'Alt+Left', FluentIcon.LEFT_ARROW,
                    context=SHELF, handler=shelf.go_back,
@@ -310,15 +306,7 @@ class FeelWindow(FluentWindow):
                    enabled_when=lambda: bool(shelf.selected))
         )
         r.register(
-            Action('undo', '撤销', 'Ctrl+Z', handler=self.undo_action,
-                   enabled_when=lambda: self.undoStack.can_undo())
-        )
-        r.register(
-            Action('redo', '重做', 'Ctrl+Y', handler=self.redo_action,
-                   enabled_when=lambda: self.undoStack.can_redo())
-        )
-        r.register(
-            Action('focus_search', '搜索图片文字', 'Ctrl+F', FluentIcon.SEARCH,
+            Action('focus_search', '搜索文件与图片文字', 'Ctrl+F', FluentIcon.SEARCH,
                    context=SHELF, handler=shelf.focus_search,
                    enabled_when=lambda: bool(cfg.ocrEnabled.value))
         )
@@ -400,11 +388,9 @@ class FeelWindow(FluentWindow):
         r.bind_widget('rescan_ocr', self.shelfPage.refreshBtn)
         r.bind_widget('nav_back', self.shelfPage.backBtn)
         r.bind_widget('nav_forward', self.shelfPage.forwardBtn)
-        r.bind_widget('undo', self.shelfPage.undoBtn)
-        r.bind_widget('redo', self.shelfPage.redoBtn)
         r.bind_widget('move_selected', self.shelfPage.moveBtn)
         r.bind_widget('focus_search', self.shelfPage.searchEdit,
-                      tooltip='搜索图片文字（Ctrl+F）')
+                      tooltip='搜索文件名与图片文字（Ctrl+F）')
         r.bind_widget('toggle_theme', self.settingsPage.themeCard)
 
         # 顶栏图标按钮此前只挂了 tooltip 没接 clicked（点了没反应）：统一走 registry
@@ -442,7 +428,7 @@ class FeelWindow(FluentWindow):
             f'重命名（{keys("rename_selected", "F2")}，单选；也可悬停卡片左上角铅笔）'
         )
         self.shelfPage.searchEdit.setToolTip(
-            f'搜索图片文字（{keys("focus_search", "Ctrl+F")}）'
+            f'搜索文件名与图片文字（{keys("focus_search", "Ctrl+F")}）'
         )
         self.playerPage.speedBtn.setToolTip(
             f'播放速度（点击选档；{keys("speed_up", "]")} 加快 / '
@@ -568,12 +554,6 @@ class FeelWindow(FluentWindow):
         log.info('资料库导航到 %s', folder)
         self._sync_ocr(Path(folder), self.shelfPage.entries)
 
-    def _on_undo_changed(self) -> None:
-        """撤销栈变了：顶栏按钮态 + 动作 enabled_when 重算（Ctrl+Z/Y 可用性）。"""
-        self.shelfPage.undoBtn.setEnabled(self.undoStack.can_undo())
-        self.shelfPage.redoBtn.setEnabled(self.undoStack.can_redo())
-        self.registry.refresh_enabled()
-
     def toggle_favorite(self, path) -> bool:
         path = Path(path)
         state = self.store.toggle_favorite(path)
@@ -639,7 +619,7 @@ class FeelWindow(FluentWindow):
             page._show_current()
 
     def _resync_player_dir(self) -> None:
-        """重扫播放队列目录并套用 _set_player_directory（移动/撤销后调用）。"""
+        """重扫播放队列目录并套用 _set_player_directory（移动后调用）。"""
         page = self.playerPage
         anchor = page.current_path
         if anchor is None and page.directory_entries:
@@ -732,7 +712,7 @@ class FeelWindow(FluentWindow):
         return bool(deleted) and not failed
 
     def move_to_folder(self, paths, target) -> bool:
-        """移入 / 拖拽移入（FR-31/32）：移动进 target 文件夹，成功入撤销栈。"""
+        """移入 / 拖拽移入（FR-31/32）：把文件移动进 target 文件夹。"""
         target_dir = Path(target)
         paths = [Path(p) for p in paths]
         if not paths or not target_dir.is_dir():
@@ -745,7 +725,6 @@ class FeelWindow(FluentWindow):
         for src, dst in moved:
             self.store.rename_path(src, dst)
         if moved:
-            self.undoStack.push(Op('移入', moved))
             self._retarget_queue_paths(moved)
             self._after_path_changes([p for pair in moved for p in pair])
             message = f'{len(moved)} 个文件 → {target_dir.name}'
@@ -760,72 +739,8 @@ class FeelWindow(FluentWindow):
                             duration=3500, parent=self)
         return bool(moved)
 
-    def undo_action(self) -> None:
-        op = self.undoStack.undo()
-        if op is None:
-            return
-        if not self._apply_op(op, reverse=True):
-            self.undoStack.drop_from_redo(op)
-
-    def redo_action(self) -> None:
-        op = self.undoStack.redo()
-        if op is None:
-            return
-        if not self._apply_op(op, reverse=False):
-            self.undoStack.drop_from_undo(op)
-
-    def _apply_op(self, op: Op, reverse: bool) -> bool:
-        """撤销/重做一批路径对：搬运 + Store 迁移 + 按归属刷新（FR-30）。
-
-        返回 False = 有条目搬运失败，调用方丢弃这条（栈与磁盘保持一致）。
-        """
-        pairs = [(dst, src) for src, dst in op.pairs] if reverse else list(op.pairs)
-        page = self.playerPage
-        current = page.current_path
-        reload_path = None
-        for src, dst in pairs:
-            if src == current:
-                if page.has_media:
-                    page.engine.release()
-                reload_path = dst
-                break
-        done: list[tuple[Path, Path]] = []
-        errors: list[str] = []
-        for src, dst in pairs:
-            try:
-                relocate(src, dst)
-            except OSError as error:
-                errors.append(f'{src.name}: {error}')
-                log.warning('撤销/重做失败 %s -> %s（%s）', src, dst, error)
-                continue
-            self.store.rename_path(src, dst)
-            done.append((src, dst))
-        if done:
-            self._retarget_queue_paths(done)
-            self._after_path_changes([p for pair in done for p in pair])
-        if reload_path is not None:
-            # 当前播放文件被搬走/搬回：按落点重装（落点没了就退回原地）
-            target = reload_path if reload_path.exists() else (
-                current if current.exists() else None)
-            if target is not None:
-                page.open_path(target, queue=self.shelfPage.queue_for(target))
-            else:
-                page._clear_stage()
-        verb = '已撤销' if reverse else '已重做'
-        if errors:
-            InfoBar.error(f'{verb}（部分失败）', '；'.join(errors[:3]),
-                          duration=4000, parent=self)
-            log.warning('%s %s：%d 成功 / %d 失败', verb, op.label,
-                        len(done), len(errors))
-            return False
-        if done:
-            InfoBar.info(verb, f'{op.label} · {len(done)} 个文件', duration=1500,
-                         parent=self)
-            log.info('%s %s：%d 个文件', verb, op.label, len(done))
-        return True
-
     def _after_path_changes(self, changed) -> None:
-        """删除/移动/撤销后按归属刷新（D10）：资料库与播放队列各管各的目录。"""
+        """删除/移动后按归属刷新（D10）：资料库与播放队列各管各的目录。"""
         parents = {Path(p).parent for p in changed}
         shelf_dir = self.shelfPage.current_folder
         if shelf_dir is not None and shelf_dir in parents:
@@ -837,17 +752,11 @@ class FeelWindow(FluentWindow):
             self._resync_player_dir()
 
     def _retarget_queue_paths(self, pairs) -> None:
-        """移动/撤销重做后同步播放队列 membership（在 _after_path_changes 之前调）。
+        """移动后同步播放队列 membership（在 _after_path_changes 之前调）：
 
-        - 旧路径换新路径：撤销重命名后队列不残留旧名（否则交集过滤会把文件挤出队列）；
-        - 新落进播放目录的文件补进 membership：拖入/移入当前目录后 prev/next 能看到它。
+        新落进播放目录的文件补进 membership——拖入/移入当前目录后 prev/next 能看到它。
         """
         page = self.playerPage
-        mapping = dict(pairs)
-        if any(entry.path in mapping for entry in page.entries):
-            page.entries = [MediaEntry(mapping.get(e.path, e.path),
-                                       e.kind, e.mtime)
-                            for e in page.entries]
         player_dir = (page.directory_entries[0].path.parent
                       if page.directory_entries else None)
         if player_dir is None:
@@ -861,7 +770,8 @@ class FeelWindow(FluentWindow):
             page.entries.append(MediaEntry(dst, kind, 0.0))
 
     def rename_file(self, entry, new_stem: str) -> bool:
-        path = Path(entry.path)
+        """改名。entry = MediaEntry 或 Path（文件夹卡直接传 Path，当文件类型处理）。"""
+        path = Path(entry.path) if isinstance(entry, MediaEntry) else Path(entry)
         new_path = path.with_name(f'{new_stem}{path.suffix}')
         if new_path == path:
             return True
@@ -892,13 +802,14 @@ class FeelWindow(FluentWindow):
             return False
         self.store.rename_path(path, new_path)
         log.info('重命名 %s -> %s', path.name, new_path.name)
-        self.undoStack.push(Op('重命名', [(path, new_path)]))
+        # 资料库归属刷新：文件夹改名必须重扫子目录列表（否则文件夹卡停在旧名）；
+        # 媒体改名随后由 queueChanged → set_entries 同步（key 相同会跳过，只重建一次）
+        shelf_dir = self.shelfPage.current_folder
+        if shelf_dir is not None and shelf_dir == path.parent:
+            self.shelfPage.rescan()
         if path.parent != player_dir:
             # 改名的文件不在播放队列目录：只刷资料库。旧逻辑拿 new_path 当 anchor
             # 去扫目录，会把播放队列改锚到资料库目录并把 membership 交集成空集（D9/11.3）
-            shelf_dir = self.shelfPage.current_folder
-            if shelf_dir is not None and shelf_dir == path.parent:
-                self.shelfPage.rescan()
             return True
         anchor = new_path if current == path else (current or new_path)
         entries, _index = scan_directory(anchor, cfg.sortMode.value)

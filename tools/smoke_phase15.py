@@ -1,9 +1,9 @@
-"""Phase 15 冒烟：资料库目录导航 / 空态 / 返回前进 / 移入 / 拖拽 / 撤销重做（SPEC §11）。
+"""Phase 15 冒烟：资料库目录导航 / 空态 / 返回前进 / 移入 / 目录当文件类型（SPEC §11）。
 
-覆盖 FR-27~32：文件夹卡置顶与点击进入、空目录中央空态（两种文案）、面包屑跳转与
-窄窗省略号、Alt+← 与按钮返回/前进、选择模式移入（打桩文件夹选择框）、合成拖拽
-（非媒体拒绝 / 非落点忽略 / 文件夹卡落点移动）、涂抹与全选不含文件夹、播放页队列
-不拽回资料库、Ctrl+Z/Y 往返（移动 + 重命名）、搜索框里 Ctrl+Z 归文本撤销。
+覆盖 FR-27/28/29/31：文件夹卡置顶与点击进入、空目录中央空态（两种文案）、面包屑跳转与
+窄窗省略号、Alt+← 与按钮返回/前进、选择模式移入（打桩文件夹选择框，含整个文件夹）、
+文件夹参与涂抹/全选、播放页队列不拽回资料库、文件夹改名/收藏/分类过滤/搜索按名字、
+文件夹删除。撤销/重做与拖拽移入均已移除（二轮、三轮拍板），不再覆盖。
 
 配置与数据库都写到 C:/tmp/scratch/feel-phase15/appdata，不碰用户真实 cfg/feel.db。
 """
@@ -21,12 +21,9 @@ TREE = OUT / 'tree'
 # 必须在 import feel.* 之前：config.py 在导入时就算出 CONFIG_PATH/DB_PATH
 os.environ['APPDATA'] = str(OUT / 'appdata')
 
-from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, Qt, QUrl  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import (  # noqa: E402
     QColor,
-    QDragEnterEvent,
-    QDragMoveEvent,
-    QDropEvent,
     QImage,
     QMouseEvent,
 )
@@ -72,11 +69,6 @@ def center_in_viewport(shelf, widget) -> QPoint:
     return top_left + QPoint(widget.width() // 2, widget.height() // 2)
 
 
-def center_in_page(shelf, widget) -> QPoint:
-    top_left = widget.mapTo(shelf, QPoint(0, 0))
-    return top_left + QPoint(widget.width() // 2, widget.height() // 2)
-
-
 def folder_card(shelf, name: str) -> FolderCard:
     for card in shelf._folder_cards:
         if card.folder.name == name:
@@ -86,14 +78,6 @@ def folder_card(shelf, name: str) -> FolderCard:
 
 def crumb_buttons(shelf):
     return shelf._crumbsBox.findChildren(TransparentPushButton)
-
-
-def drag_event(cls, pos: QPoint, mime: QMimeData, accept: bool = False):
-    # PySide6 签名要 QPoint + 单个 DropAction（处理器不读 actions，用 CopyAction 即可）
-    event = cls(QPoint(pos), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
-    if not accept:
-        event.ignore()  # QEvent 默认 accepted=true，先归零让断言只认处理器行为
-    return event
 
 
 def main() -> int:
@@ -115,8 +99,10 @@ def main() -> int:
     shelf = window.shelfPage
     page = window.playerPage
     assert not window.registry.problems(), window.registry.problems()
-    for aid in ('nav_back', 'nav_forward', 'move_selected', 'undo', 'redo'):
+    for aid in ('nav_back', 'nav_forward', 'move_selected'):
         assert aid in window.registry.actions, aid
+    for aid in ('undo', 'redo'):
+        assert aid not in window.registry.actions, f'{aid} 应已移除'
     print('actions OK')
 
     # ---- 1) 打开文件 → 资料库同目录，文件夹卡置顶（FR-27）----
@@ -131,7 +117,6 @@ def main() -> int:
     assert len(shelf._media_cards()) == 3, len(shelf._media_cards())
     assert shelf.countLabel.text() == '5 个文件夹 · 3 项', shelf.countLabel.text()
     assert not shelf.backBtn.isEnabled() and not shelf.forwardBtn.isEnabled()
-    assert not shelf.undoBtn.isEnabled() and not shelf.redoBtn.isEnabled()
     window.grab().save(str(OUT / 'p15_shelf_root.png'))
     print('folder cards OK')
 
@@ -221,87 +206,34 @@ def main() -> int:
         window.store.favorite_paths()
     assert shelf.selected == set(), shelf.selected
     assert shelf.countLabel.text() == '5 个文件夹 · 1 项', shelf.countLabel.text()
-    assert shelf.undoBtn.isEnabled() and not shelf.redoBtn.isEnabled()
     print('move-selected OK')
 
-    # ---- 7) Ctrl+Z / Ctrl+Y 往返（FR-30，移动类）----
-    window.activateWindow()
-    shelf.searchEdit.clearFocus()
-    QTest.keyClick(window, Qt.Key_Z, Qt.ControlModifier)
+    # ---- 7) 移入结果持久 + 收藏随迁可逆（无撤销；手动移回归位，后续段还要用三个文件）----
+    assert window.move_to_folder([TREE / 'a_sub' / 'z1.png',
+                                  TREE / 'a_sub' / 'z2.png'], str(TREE))
     QTest.qWait(300)
-    assert (TREE / 'z1.png').exists() and (TREE / 'z2.png').exists(), '撤销移入失败'
+    assert (TREE / 'z1.png').exists() and (TREE / 'z2.png').exists(), '移回失败'
     assert not (TREE / 'a_sub' / 'z1.png').exists()
     assert window.store.favorite_paths() == {TREE / 'z1.png'}, \
         window.store.favorite_paths()
     assert shelf.countLabel.text() == '5 个文件夹 · 3 项', shelf.countLabel.text()
-    assert not shelf.undoBtn.isEnabled() and shelf.redoBtn.isEnabled()
+    print('move back OK')
 
-    QTest.keyClick(window, Qt.Key_Y, Qt.ControlModifier)
-    QTest.qWait(300)
-    assert (TREE / 'a_sub' / 'z1.png').exists() and not (TREE / 'z1.png').exists(), \
-        '重做移入失败'
-    assert shelf.undoBtn.isEnabled() and not shelf.redoBtn.isEnabled()
-
-    QTest.keyClick(window, Qt.Key_Z, Qt.ControlModifier)
-    QTest.qWait(300)
-    assert (TREE / 'z1.png').exists(), '第二次撤销应回到移入前'
-    print('undo/redo OK')
-
-    # ---- 8) 拖拽移入（FR-32）：非媒体拒绝 / 非落点忽略 / 文件夹卡移动 ----
-    mime = QMimeData()
-    mime.setUrls([QUrl.fromLocalFile(str(TREE / 'z3.png'))])
-    bad = QMimeData()
-    bad.setUrls([QUrl.fromLocalFile(str(TREE / 'note.txt'))])
-    target = folder_card(shelf, 'c_sub')
-    over_media = shelf._media_cards()[0]
-    pos_media = center_in_page(shelf, over_media)
-    pos_target = center_in_page(shelf, target)
-
-    enter_bad = drag_event(QDragEnterEvent, pos_target, bad)
-    QApplication.sendEvent(shelf, enter_bad)
-    assert not enter_bad.isAccepted(), '非媒体拖入不该被接受'
-
-    enter = drag_event(QDragEnterEvent, pos_media, mime, accept=True)
-    QApplication.sendEvent(shelf, enter)
-    assert enter.isAccepted(), '有效媒体 dragEnter 应先接受（落点后面裁决）'
-
-    move_off = drag_event(QDragMoveEvent, pos_media, mime)
-    QApplication.sendEvent(shelf, move_off)
-    assert not move_off.isAccepted(), '不在文件夹卡上不该接受'
-    drop_off = drag_event(QDropEvent, pos_media, mime)
-    QApplication.sendEvent(shelf, drop_off)
-    assert not drop_off.isAccepted()
-    assert (TREE / 'z3.png').exists(), '落点不对不能搬'
-
-    # Qt 在合成事件里：一次 drop 之后拖拽会话即结束，后续 dragMove 不再投递
-    # （真实拖拽每轮都从 dragEnter 开始，不受影响）——这里补一次 enter 再 move
-    enter_on = drag_event(QDragEnterEvent, pos_target, mime, accept=True)
-    QApplication.sendEvent(shelf, enter_on)
-    assert enter_on.isAccepted()
-    move_on = drag_event(QDragMoveEvent, pos_target, mime, accept=True)
-    QApplication.sendEvent(shelf, move_on)
-    assert move_on.isAccepted()
-    drop_on = drag_event(QDropEvent, pos_target, mime, accept=True)
-    QApplication.sendEvent(shelf, drop_on)
-    assert drop_on.isAccepted()
-    QTest.qWait(300)
-    assert (TREE / 'c_sub' / 'z3.png').exists() and not (TREE / 'z3.png').exists(), \
-        '拖拽移入失败'
-    assert shelf.undoBtn.isEnabled()
-    print('drag-drop OK')
-
-    # ---- 9) 涂抹 / 全选不含文件夹（D7）----
+    # ---- 8) 文件夹参与涂抹 / 全选（2026-11-16 二轮：当成文件类型）----
     shelf.select_all()
-    assert shelf.selected == {TREE / 'z1.png', TREE / 'z2.png'}, shelf.selected
+    folder_paths = {c.folder for c in shelf._folder_cards}
+    assert folder_paths <= shelf.selected, '全选应包含文件夹'
+    assert {TREE / 'z1.png', TREE / 'z2.png'} <= shelf.selected, shelf.selected
+    # 取消笔从媒体卡扫回文件夹行：区间内的文件夹与媒体一并退出选区
     media = shelf._media_cards()
     shelf.begin_paint(center_in_viewport(shelf, media[0]))
     shelf.paint_to(center_in_viewport(shelf, folder_card(shelf, 'a_sub')))
     shelf.end_paint()
-    assert TREE / 'a_sub' not in shelf.selected, '文件夹进了涂抹选区'
-    assert all(p.suffix == '.png' for p in shelf.selected), shelf.selected
-    print('selection excludes folders OK')
+    assert TREE / 'a_sub' not in shelf.selected, '取消笔应把扫过的文件夹退掉'
+    assert media[0].path not in shelf.selected, '取消笔应把起笔媒体退掉'
+    print('folders selectable OK')
 
-    # ---- 10) 选择模式下点文件夹卡 = 进入（overlay 起笔特判）----
+    # ---- 9) 选择模式下点文件夹卡 = 进入（overlay 起笔特判）----
     target = folder_card(shelf, 'c_sub')
     center = QPoint(target.width() // 2, target.height() // 2)
     # QWidget.mapFrom(source, pos) 只认祖先：source 是后代时走 fallback 返回垃圾，
@@ -319,7 +251,7 @@ def main() -> int:
     assert shelf.current_folder == TREE, shelf.current_folder
     print('overlay folder press OK')
 
-    # ---- 11) 播放队列变化不拽回资料库（D9）----
+    # ---- 10) 播放队列变化不拽回资料库（D9）----
     shelf.navigate_to(TREE / 'a_sub')
     QTest.qWait(150)
     page.queueChanged.emit()  # 模拟播放页队列刷新（含异目录场景）
@@ -330,41 +262,74 @@ def main() -> int:
     assert shelf.current_folder == TREE, shelf.current_folder
     print('queue isolation OK')
 
-    # ---- 12) 搜索框里 Ctrl+Z 归文本撤销，不触发全局撤销（已知陷阱验证）----
-    shelf.set_search_visible(True)
-    shelf.searchEdit.setFocus()
-    shelf.searchEdit.setText('abc')
+    # ---- 11) 文件夹当文件类型：改名 / 收藏 / 分类过滤 / 搜索按名字 ----
+    # 改名（文件夹卡走 rename_file 的 Path 入口）
+    assert window.rename_file(TREE / 'd_texts', 'd_renamed')
+    QTest.qWait(300)
+    assert (TREE / 'd_renamed').is_dir() and not (TREE / 'd_texts').exists()
+    assert any(c.folder.name == 'd_renamed' for c in shelf._folder_cards), \
+        [c.folder.name for c in shelf._folder_cards]
+
+    # 收藏文件夹（♥ → 收藏筛选里出现）
+    window.toggle_favorite(TREE / 'a_sub')
+    assert TREE / 'a_sub' in window.store.favorite_paths()
+    assert folder_card(shelf, 'a_sub').favorite, '文件夹卡 ♥ 没亮'
+
+    # 分类过滤对文件夹生效：图片 → 全隐藏；收藏 → 只剩已收藏的
+    shelf._on_category('image')
     QTest.qWait(100)
-    assert window.undoStack.can_undo(), '栈上应有第 8 步的拖入条目'
-    QTest.keyClick(shelf.searchEdit, Qt.Key_Z, Qt.ControlModifier)
+    assert not shelf._folder_cards, [c.folder.name for c in shelf._folder_cards]
+    shelf._on_category('favorite')
+    QTest.qWait(100)
+    assert [c.folder.name for c in shelf._folder_cards] == ['a_sub'], \
+        [c.folder.name for c in shelf._folder_cards]
+    shelf._on_category('all')
+    QTest.qWait(100)
+    assert len(shelf._folder_cards) == 5, \
+        [c.folder.name for c in shelf._folder_cards]
+
+    # 搜索 = OCR 文本 ∪ 文件名 ∪ 目录名（图片搜索关着也按名字匹配）
+    shelf.set_search_visible(True)
+    shelf.searchEdit.setText('d_renamed')
     QTest.qWait(150)
-    assert (TREE / 'c_sub' / 'z3.png').exists(), \
-        '搜索框里 Ctrl+Z 不该触发全局撤销'
-    assert window.undoStack.can_undo()
+    assert [c.folder.name for c in shelf._folder_cards] == ['d_renamed'], \
+        [c.folder.name for c in shelf._folder_cards]
+    shelf.searchEdit.setText('z1')
+    QTest.qWait(150)
+    assert not shelf._folder_cards, '目录名不匹配时文件夹应被滤掉'
+    visible = shelf.visible_paths()
+    assert TREE / 'z1.png' in visible and TREE / 'z2.png' not in visible, visible
     shelf.searchEdit.clear()
     shelf.set_search_visible(False)
-    print('search Ctrl+Z isolation OK')
+    QTest.qWait(100)
+    print('folder rename/favorite/filter/search OK')
 
-    # ---- 13) 重命名撤销 / 重做往返（FR-30，重命名类）----
-    window.activateWindow()
-    shelf.searchEdit.clearFocus()
-    entry = next(e for e in shelf.entries if e.path.name == 'z1.png')
-    assert window.rename_file(entry, 'z1_renamed')
+    # ---- 12) 文件夹删除 + 选择模式移入整个文件夹 ----
+    doomed = TREE / 'doomed'
+    doomed.mkdir()
+    (doomed / 'inner.png').write_bytes(b'x')
+    shelf.rescan()
+    QTest.qWait(150)
+    assert any(c.folder == doomed for c in shelf._folder_cards)
+    assert window.delete_paths([doomed], confirm=False)
     QTest.qWait(300)
-    assert (TREE / 'z1_renamed.png').exists() and not (TREE / 'z1.png').exists()
-    QTest.keyClick(window, Qt.Key_Z, Qt.ControlModifier)
-    QTest.qWait(300)
-    assert (TREE / 'z1.png').exists() and not (TREE / 'z1_renamed.png').exists(), \
-        '撤销重命名失败'
-    QTest.keyClick(window, Qt.Key_Y, Qt.ControlModifier)
-    QTest.qWait(300)
-    assert (TREE / 'z1_renamed.png').exists(), '重做重命名失败'
-    QTest.keyClick(window, Qt.Key_Z, Qt.ControlModifier)
-    QTest.qWait(300)
-    assert (TREE / 'z1.png').exists(), '再撤销应回到原名'
-    print('rename undo/redo OK')
+    assert not doomed.exists(), '文件夹删除失败（应回收站）'
+    assert not any(c.folder == doomed for c in shelf._folder_cards)
 
-    # ---- 14) 日志与收尾 ----
+    real_get2 = QFileDialog.getExistingDirectory
+    QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: str(TREE / 'a_sub'))
+    try:
+        shelf.selected = {TREE / 'deep'}
+        shelf._refresh_selection()
+        shelf.move_selected()
+    finally:
+        QFileDialog.getExistingDirectory = real_get2
+    QTest.qWait(300)
+    assert not (TREE / 'deep').exists() and (TREE / 'a_sub' / 'deep').exists(), \
+        '文件夹移入失败'
+    print('folder delete/move OK')
+
+    # ---- 13) 日志与收尾 ----
     text = logs.LOG_PATH.read_text(encoding='utf-8')
     assert '资料库导航到' in text, '导航没写日志'
     assert '移入' in text, '移入没写日志'

@@ -1,6 +1,8 @@
 """资料库卡片：缩略图/音频占位 + 文件名 + 选中态 + 内联重命名（FR-21/22/20）。"""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QEvent, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLineEdit, QWidget
@@ -52,6 +54,11 @@ class ShelfCard(QWidget):
         self.setFixedWidth(CARD_W)
         self.setMouseTracking(True)
         self.setToolTip(str(entry.path))
+
+    @property
+    def path(self) -> Path:
+        """与 FolderCard 统一的路径入口（涂抹选区 / 选中过滤用）。"""
+        return self.entry.path
 
     # ---- 尺寸（资料库按窗口宽度均分）----
     def set_card_width(self, width: int) -> None:

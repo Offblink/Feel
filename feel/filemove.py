@@ -1,6 +1,6 @@
-"""移动文件到目标文件夹（移入 / 拖拽移入 / 撤销重做共用，FR-30/31/32）。
+"""移动文件到目标文件夹（移入 / 拖拽移入共用，FR-31/32）。
 
-纯函数：不碰 Qt、播放页与队列。调用方负责 Store 路径迁移、队列刷新、撤销入栈。
+纯函数：不碰 Qt、播放页与队列。调用方负责 Store 路径迁移与队列刷新。
 """
 from __future__ import annotations
 
@@ -39,8 +39,12 @@ def move_files(paths, target_dir: str | Path
         if src.parent == target_dir:
             failed.append((src, '已在该文件夹'))
             continue
-        if not src.is_file():
+        if not src.exists():
             failed.append((src, '文件不存在'))
+            continue
+        if target_dir == src or src in target_dir.parents:
+            # 文件夹整体移入：目标不能是自己或自己的子孙（会把目录树搬进自己）
+            failed.append((src, '不能移进自身'))
             continue
         dst = unique_target(target_dir, src.name)
         try:
@@ -50,17 +54,3 @@ def move_files(paths, target_dir: str | Path
             continue
         moved.append((src, dst))
     return moved, failed
-
-
-def relocate(src: Path, dst: Path) -> None:
-    """撤销/重做：把路径对正/逆向搬过去（同父 = 改名，跨父 = 移动）。
-
-    dst 已存在直接抛错（调用方丢弃该撤销条目），不覆盖用户文件。
-    """
-    src, dst = Path(src), Path(dst)
-    if dst.exists():
-        raise FileExistsError(f'目标已存在：{dst}')
-    if src.parent == dst.parent:
-        os.rename(src, dst)
-    else:
-        shutil.move(str(src), str(dst))

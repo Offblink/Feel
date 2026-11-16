@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from feel.filemove import move_files, relocate, unique_target  # noqa: E402
+from feel.filemove import move_files, unique_target  # noqa: E402
 
 
 class FilemoveTest(unittest.TestCase):
@@ -59,31 +59,24 @@ class FilemoveTest(unittest.TestCase):
             self.assertEqual(failed[0][1], '已在该文件夹')
             self.assertTrue(existing.exists())
 
-    def test_relocate_same_parent_renames_cross_parent_moves(self):
+    def test_move_folders_and_reject_self_nesting(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            d1 = root / 'd1'
-            d2 = root / 'd2'
-            d1.mkdir()
-            d2.mkdir()
-            same = d1 / 's.png'
-            same.write_bytes(b'x')
-            relocate(same, d1 / 's2.png')
-            self.assertTrue((d1 / 's2.png').exists())
-            self.assertFalse(same.exists())
-            relocate(d1 / 's2.png', d2 / 's2.png')
-            self.assertTrue((d2 / 's2.png').exists())
-            self.assertFalse((d1 / 's2.png').exists())
-
-    def test_relocate_refuses_to_overwrite_and_missing_source(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            target = root / 't.png'
-            target.write_bytes(b'x')
-            with self.assertRaises(FileExistsError):
-                relocate(target, target)
-            with self.assertRaises(OSError):
-                relocate(root / 'nope.png', root / 'other.png')
+            src = root / 'src'
+            (src / 'inner').mkdir(parents=True)
+            dst = root / 'dst'
+            dst.mkdir()
+            moved, failed = move_files([src], dst)
+            self.assertEqual(len(moved), 1, failed)
+            self.assertTrue((dst / 'src' / 'inner').exists())
+            self.assertFalse(src.exists())
+            # 目标是自己 / 自己的子孙 → 拒绝（目录树不能搬进自己）
+            moved2, failed2 = move_files([dst / 'src'], dst / 'src' / 'inner')
+            self.assertEqual(moved2, [])
+            self.assertEqual(failed2[0][1], '不能移进自身')
+            moved3, failed3 = move_files([dst / 'src'], dst / 'src')
+            self.assertEqual(moved3, [])
+            self.assertEqual(failed3[0][1], '不能移进自身')
 
 
 if __name__ == '__main__':
