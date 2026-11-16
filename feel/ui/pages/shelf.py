@@ -1,17 +1,24 @@
 """资料库页：卡片网格 + 分类/扩展名筛选 + 选择模式涂抹多选 + 逐卡重命名/删除。
 
 FR-18 分类过滤 / FR-19 涂抹多选 / FR-20 删除重命名 / FR-21 卡片 / FR-22 点击打开。
+FR-27 目录导航（地址栏 + 面包屑 + 文件夹卡）/ FR-28 空目录空态 / FR-29 返回前进 /
+FR-31 选择模式移入 / FR-32 拖拽移入（规格见 SPEC §11）。
 
-顶栏收敛为「刷新 + 选择」：进入选择模式后才出现 全选 / 删除 / 取消。
+顶栏 = 「撤销/重做 + 打开文件夹 + 刷新 + 选择」，其下是地址栏行（返回/前进 + 面包屑）；
+进入选择模式后出现 已选 N / 全选 / 移入 / 删除 / 取消。
 重命名与删除是卡片悬停操作（左上角），不再占顶栏。
+
+目录状态所有权（D9）：_folder 是权威 current_dir，只有显式导航入口能改它；
+播放队列（set_entries）只在同目录时刷新条目，不同目录一律忽略，防止播放页拽回资料库。
 """
 from __future__ import annotations
 
+import os
 from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QTimer, Qt, Signal
-from PySide6.QtGui import QImage
+from PySide6.QtCore import QPoint, QSize, QTimer, Qt, Signal
+from PySide6.QtGui import QFontMetrics, QImage
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -34,8 +41,9 @@ from qfluentwidgets import (
 )
 
 from ...config import SORT_MODE_TEXTS, SORT_MODES, cfg
-from ...scanner import MediaEntry
+from ...scanner import MediaEntry, media_kind, scan_folder, scan_subdirs
 from ...thumbs import ThumbnailService
+from ..widgets.folder_card import FolderCard
 from ..widgets.shelf_card import CARD_H, CARD_W, ShelfCard
 
 CATEGORIES = [('all', '全部'), ('image', '图片'), ('video', '视频'), ('audio', '音频'),
@@ -44,6 +52,21 @@ CATEGORIES = [('all', '全部'), ('image', '图片'), ('video', '视频'), ('aud
 # 大目录分批建卡：每 tick 建这么多张，加载动画才有机会转动
 BUILD_CHUNK = 60
 THUMB_MEMORY = 256
+# 目录访问历史深度（返回/前进）
+HISTORY_MAX = 50
+
+
+class _CrumbBox(QWidget):
+    """面包屑容器：最小尺寸恒为 0。
+
+    只 setMinimumSize(0,0) 不够——父布局计算自身 minimumSizeHint 时仍会取
+    本控件的 minimumSizeHint（= 内部各段按钮之和），长路径会把窗口最小宽度
+    撑到面包屑全量放得下为止，省略号永远出不来。这里直接把最小提示钉死 0，
+    放不下由 _crumb_segments 按实测宽度裁剪。
+    """
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 0)
 
 
 class _PaintOverlay(QWidget):
@@ -57,6 +80,12 @@ class _PaintOverlay(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # 选择模式下点文件夹卡 = 进入（不作涂抹起笔，否则会误选最近的媒体卡）
+            card = self._page._folder_card_at_viewport(event.position().toPoint())
+            if card is not None:
+                self._page.navigate_to(card.folder)
+                event.accept()
+                return
             self._painting = True
             self._page.begin_paint(event.position().toPoint())
 
@@ -79,6 +108,12 @@ class ShelfPage(QWidget):
     favoriteToggled = Signal(object)
     refreshRequested = Signal()
     sortModeChanged = Signal(str)
+    # 完成一次目录导航（窗口侧：记日志 + 新目录补 OCR）
+    folderChanged = Signal(str)
+    # 选择模式移入 / 拖拽落点：(paths, target 文件夹) → 窗口执行移动
+    moveRequested = Signal(object, str)
+    undoRequested = Signal()
+    redoRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -93,6 +128,13 @@ class ShelfPage(QWidget):
         self._paint_mode = False
         self._search = ''
         self._folder: Path | None = None
+        # 目录导航（FR-27/29）：子目录列表、文件夹卡、返回/前进历史
+        self.subdirs: list[Path] = []
+        self._folder_cards: list[FolderCard] = []
+        self._back: list[Path] = []
+        self._forward: list[Path] = []
+        self._drop_card: FolderCard | None = None
+        self._crumb_key: tuple | None = None
         self._entries_key: tuple | None = None
         self.ocr_texts: dict[Path, str] = {}
         self.favorites: set[Path] = set()
@@ -119,12 +161,17 @@ class ShelfPage(QWidget):
         root.setContentsMargins(36, 18, 36, 12)
         root.setSpacing(10)
 
-        # 顶栏：标题 + 计数 │ 刷新 │ 选择；选择模式追加 已选N/全选/删除/取消
+        # 顶栏：标题 + 计数 │ 撤销/重做 │ 打开文件夹/刷新/选择；
+        # 选择模式追加 已选N/全选/移入/删除/取消
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         self.titleLabel = StrongBodyLabel('资料库', self)
         self.countLabel = CaptionLabel('', self)
         self.selLabel = CaptionLabel('', self)
+        self.undoBtn = TransparentPushButton('撤销', self)
+        self.redoBtn = TransparentPushButton('重做', self)
+        self.undoBtn.setEnabled(False)
+        self.redoBtn.setEnabled(False)
         self.refreshBtn = TransparentPushButton('刷新', self)
         self.refreshBtn.setIcon(FluentIcon.SYNC)
         self.openFolderBtn = TransparentPushButton('打开文件夹', self)
@@ -133,21 +180,51 @@ class ShelfPage(QWidget):
         self.paintBtn.setText('选择')
         self.paintBtn.setCheckable(True)
         self.selectAllBtn = TransparentPushButton('全选', self)
+        self.moveBtn = TransparentPushButton('移入', self)
         self.deleteBtn = TransparentPushButton('删除', self)
         self.cancelSelectBtn = TransparentPushButton('取消', self)
         title_row.addWidget(self.titleLabel)
         title_row.addWidget(self.countLabel)
         title_row.addStretch(1)
         title_row.addWidget(self.selLabel)
+        title_row.addWidget(self.undoBtn)
+        title_row.addWidget(self.redoBtn)
         title_row.addWidget(self.openFolderBtn)
         title_row.addWidget(self.refreshBtn)
         title_row.addWidget(self.paintBtn)
         title_row.addWidget(self.selectAllBtn)
+        title_row.addWidget(self.moveBtn)
         title_row.addWidget(self.deleteBtn)
         title_row.addWidget(self.cancelSelectBtn)
-        for widget in (self.selLabel, self.selectAllBtn, self.deleteBtn,
-                       self.cancelSelectBtn):
+        for widget in (self.selLabel, self.selectAllBtn, self.moveBtn,
+                       self.deleteBtn, self.cancelSelectBtn):
             widget.hide()
+
+        # 地址栏行（FR-27/29）：返回 / 前进 + 可点面包屑
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(6)
+        self.backBtn = TransparentPushButton('返回', self)
+        self.backBtn.setIcon(FluentIcon.LEFT_ARROW)
+        self.forwardBtn = TransparentPushButton('前进', self)
+        self.forwardBtn.setIcon(FluentIcon.RIGHT_ARROW)
+        # 盒子最小尺寸恒 0（见 _CrumbBox）：窗口最小宽度不被面包屑内容撑大
+        self._crumbsBox = _CrumbBox(self)
+        self._crumbsBox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._crumbsLayout = QHBoxLayout(self._crumbsBox)
+        self._crumbsLayout.setContentsMargins(4, 0, 0, 0)
+        self._crumbsLayout.setSpacing(2)
+        self._crumbsLayout.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        # 盒子最小尺寸钉死 (0,0)：只 setMinimumWidth(0) 无效（高度仍无显式值，
+        # 布局会退回 minimumSizeHint = 各段按钮之和 → 窗口最小宽度被面包屑撑大）。
+        # 盒子不贡献最小值，放不下就由 _crumb_segments 按实测宽度裁剪
+        self._crumbsBox.setMinimumSize(0, 0)
+        # 面包屑按可用宽度裁剪：窗口 resize 时本页 resizeEvent 可能早于布局更新，
+        # 盒子自己的 Resize 才是最终宽度（key 去重防止自触发循环）
+        self._crumbsBox.installEventFilter(self)
+        nav_row.addWidget(self.backBtn)
+        nav_row.addWidget(self.forwardBtn)
+        nav_row.addSpacing(6)
+        nav_row.addWidget(self._crumbsBox, 1)
 
         filter_row = QHBoxLayout()
         filter_row.setSpacing(6)
@@ -213,40 +290,58 @@ class ShelfPage(QWidget):
         self.overlay.hide()
 
         root.addLayout(title_row)
+        root.addLayout(nav_row)
         root.addLayout(filter_row)
         root.addWidget(self.scroll, 1)
 
         # 启动时还没打开任何文件：空态文案直接可见（一旦建卡 _rebuild_grid 会隐藏它）
         self._show_empty()
+        # 地址栏初始态：返回/前进禁用、面包屑占位
+        self._sync_nav_ui()
+        # 页级接住外部拖拽（FR-32）：事件自卡片/涂抹 overlay 沿父链上浮到这里
+        self.setAcceptDrops(True)
 
         self.extCombo.currentIndexChanged.connect(self._on_ext_changed)
         self.sortCombo.currentIndexChanged.connect(self._on_sort_changed)
         self.refreshBtn.clicked.connect(self.refreshRequested.emit)
         self.openFolderBtn.clicked.connect(self.openFolderRequested.emit)
         self.selectAllBtn.clicked.connect(self.select_all)
+        self.moveBtn.clicked.connect(self.move_selected)
         self.deleteBtn.clicked.connect(self.delete_selected)
         self.cancelSelectBtn.clicked.connect(lambda: self._set_paint_mode(False))
         self.paintBtn.clicked.connect(self.toggle_paint_mode)
+        self.backBtn.clicked.connect(self.go_back)
+        self.forwardBtn.clicked.connect(self.go_forward)
+        self.undoBtn.clicked.connect(self.undoRequested.emit)
+        self.redoBtn.clicked.connect(self.redoRequested.emit)
         self.searchEdit.textChanged.connect(self._on_search_changed)
         self.scroll.viewport().installEventFilter(self)
 
-    # ---------------- 数据 ----------------
+    # ---------------- 数据 / 目录导航 ----------------
     def set_entries(self, entries: list[MediaEntry]) -> None:
-        folder = Path(entries[0].path).parent if entries else None
-        if folder != self._folder:
-            self._folder = folder
-            self.ocr_texts = {}
-            self._search = ''
-            self.searchEdit.clear()
-            self._entries_key = None
+        """播放队列同步（D9）：只认与资料库当前目录同目录的条目，不同目录一律忽略。
+
+        目录变更只走 navigate_to（面包屑/文件夹卡/返回/打开文件等显式入口），
+        播放页翻页/重扫不能把资料库拽回播放页的目录。
+        """
+        if not entries:
+            return
+        if Path(entries[0].path).parent != self._folder:
+            return
         self.entries = list(entries)
         known = {e.path for e in self.entries}
         self.selected &= known
-        # 同一目录同一文件集合（例如只是切了当前文件/刷新）：不重建网格，
-        # 否则千级目录每次点卡片都会全量重建。
-        key = tuple((e.path, e.kind) for e in self.entries)
+        self._apply_entries()
+
+    def _apply_entries(self) -> None:
+        """条目/文件夹变了：同集合同顺序跳过，否则重建（含隐藏页挂起）。
+
+        key 含文件夹与顺序：排序、导航、增删文件都会触发重建。
+        """
+        key = (self._folder, tuple(self.subdirs),
+               tuple((entry.path, entry.kind) for entry in self.entries))
         if key == self._entries_key:
-            self.countLabel.setText(f'{len(self._visible_entries())} 项')
+            self._update_count()
             return
         self._entries_key = key
         self._rebuild_ext_options()
@@ -255,7 +350,238 @@ class ShelfPage(QWidget):
         else:
             # 打开文件时资料库多半不在前台：先记账，切到本页再建卡，打开文件不卡
             self._pending_rebuild = True
-            self.countLabel.setText(f'{len(self._visible_entries())} 项')
+            self._update_count()
+
+    def _update_count(self) -> None:
+        parts = []
+        if self.subdirs:
+            parts.append(f'{len(self.subdirs)} 个文件夹')
+        parts.append(f'{len(self._visible_entries())} 项')
+        self.countLabel.setText(' · '.join(parts))
+
+    @property
+    def current_folder(self) -> Path | None:
+        return self._folder
+
+    def can_go_back(self) -> bool:
+        return bool(self._back)
+
+    def can_go_forward(self) -> bool:
+        return bool(self._forward)
+
+    def navigate_to(self, folder) -> None:
+        """显式导航进 folder（FR-27）：记历史、清选区/搜索、重建、发 folderChanged。"""
+        folder = Path(folder)
+        if folder == self._folder:
+            return
+        if not folder.is_dir():
+            InfoBar.warning('打开文件夹', f'目录不存在：{folder}', duration=3000,
+                            parent=self)
+            return
+        if self._folder is not None:
+            self._back.append(self._folder)
+            if len(self._back) > HISTORY_MAX:
+                del self._back[0]
+            self._forward.clear()
+        self._load_dir(folder)
+
+    def _load_dir(self, folder: Path) -> None:
+        """真正切目录：扫描文件夹与媒体，重置按目录状态（返回/前进也走这里）。"""
+        self._folder = folder
+        self.subdirs = scan_subdirs(folder, cfg.sortMode.value)
+        self.entries = scan_folder(folder, cfg.sortMode.value)
+        self.ocr_texts = {}
+        self._search = ''
+        # clear 会同步触发 textChanged → 重建一次；屏蔽掉，统一交给下面的 _apply_entries
+        self.searchEdit.blockSignals(True)
+        self.searchEdit.clear()
+        self.searchEdit.blockSignals(False)
+        self.selected.clear()
+        self._apply_entries()
+        self._sync_nav_ui()
+        self.folderChanged.emit(str(folder))
+
+    def go_back(self) -> None:
+        if not self._back:
+            return
+        loaded = False
+        while self._back:
+            target = self._back.pop()
+            if target.is_dir():
+                if self._folder is not None:
+                    self._forward.append(self._folder)
+                    if len(self._forward) > HISTORY_MAX:
+                        del self._forward[0]
+                self._load_dir(target)
+                loaded = True
+                break
+        if not loaded:
+            InfoBar.warning('返回', '上一个目录已不存在', duration=2500, parent=self)
+
+    def go_forward(self) -> None:
+        if not self._forward:
+            return
+        loaded = False
+        while self._forward:
+            target = self._forward.pop()
+            if target.is_dir():
+                if self._folder is not None:
+                    self._back.append(self._folder)
+                    if len(self._back) > HISTORY_MAX:
+                        del self._back[0]
+                self._load_dir(target)
+                loaded = True
+                break
+        if not loaded:
+            InfoBar.warning('前进', '下一个目录已不存在', duration=2500, parent=self)
+
+    def rescan(self) -> None:
+        """同目录重扫（删除/移动/改名/排序/F5，D10）：文件夹 + 媒体，历史不变。"""
+        if self._folder is None:
+            return
+        self.subdirs = scan_subdirs(self._folder, cfg.sortMode.value)
+        self.entries = scan_folder(self._folder, cfg.sortMode.value)
+        self.selected &= {e.path for e in self.entries}
+        self._apply_entries()
+
+    # ---- 地址栏：返回/前进按钮态 + 面包屑 ----
+    def _sync_nav_ui(self) -> None:
+        self.backBtn.setEnabled(bool(self._back))
+        self.forwardBtn.setEnabled(bool(self._forward))
+        self._rebuild_crumbs()
+
+    def _crumb_segments(self) -> tuple[bool, list[tuple[Path, str]]]:
+        """(是否加省略号, [(完整路径, 显示名)...])：过宽时从左裁剪、最左留「…」。"""
+        if self._folder is None:
+            return False, []
+        segments: list[tuple[Path, str]] = []
+        accumulated = Path()
+        for part in self._folder.parts:
+            accumulated = accumulated / part
+            segments.append((accumulated, part.rstrip('\\/') or part))
+        metrics = QFontMetrics(self.font())
+
+        def width_of(name: str) -> int:
+            return metrics.horizontalAdvance(name) + 18  # 按钮内边距
+
+        available = self._crumbsBox.width()
+        if available <= 0:
+            available = max(240, self.width() - 260)
+        ellipsis = False
+        while len(segments) > 1:
+            estimate = sum(width_of(name) for _, name in segments)
+            estimate += 14 * (len(segments) - 1)
+            if ellipsis:
+                estimate += 30
+            if estimate <= available:
+                break
+            segments.pop(0)
+            ellipsis = True
+        return ellipsis, segments
+
+    def _rebuild_crumbs(self) -> None:
+        ellipsis, segments = self._crumb_segments()
+        key = (ellipsis, tuple(str(path) for path, _ in segments))
+        if key == self._crumb_key:
+            return
+        self._crumb_key = key
+        while self._crumbsLayout.count():
+            item = self._crumbsLayout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+        if not segments:
+            self._crumbsLayout.addWidget(
+                CaptionLabel('未打开文件夹', self._crumbsBox))
+            return
+        if ellipsis:
+            more = TransparentPushButton('…', self._crumbsBox)
+            more.setEnabled(False)
+            more.setToolTip(str(self._folder))
+            self._crumbsLayout.addWidget(more)
+        for index, (path, name) in enumerate(segments):
+            if index:
+                self._crumbsLayout.addWidget(
+                    CaptionLabel('›', self._crumbsBox))
+            button = TransparentPushButton(name, self._crumbsBox)
+            button.setToolTip(str(path))
+            button.clicked.connect(lambda _c=False, p=path: self.navigate_to(p))
+            self._crumbsLayout.addWidget(button)
+
+    # ---- 选择模式「移入」（FR-31）----
+    def move_selected(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        visible = {e.path for e in self._visible_entries()}
+        paths = sorted((p for p in self.selected if p in visible),
+                       key=lambda p: p.name)
+        if not paths:
+            InfoBar.warning('移入', '请先选中文件', duration=2500, parent=self)
+            return
+        start = str(self._folder) if self._folder is not None else ''
+        target = QFileDialog.getExistingDirectory(self, '移入到', start)
+        if not target:
+            return
+        self.moveRequested.emit(paths, target)
+
+    # ---- 拖拽移入（FR-32）：页级 acceptDrops，落点 = 当前可见的文件夹卡 ----
+    @staticmethod
+    def _media_paths(mime) -> list[Path]:
+        """mime 里真实存在且是媒体的本地文件（目录/其他类型不算）。"""
+        paths: list[Path] = []
+        for url in mime.urls():
+            if not url.isLocalFile():
+                continue
+            path = Path(url.toLocalFile())
+            if media_kind(path) is not None and path.is_file():
+                paths.append(path)
+        return paths
+
+    def _drop_card_at(self, pos_in_page: QPoint) -> FolderCard | None:
+        # 拖拽事件坐标在本页；文件夹卡几何在网格容器里，经视口中转一次
+        viewport_pos = self.scroll.viewport().mapFrom(self, pos_in_page)
+        return self._folder_card_at_viewport(viewport_pos)
+
+    def _set_drop_highlight(self, card: FolderCard | None) -> None:
+        if card is self._drop_card:
+            return
+        if self._drop_card is not None:
+            self._drop_card.set_drop_active(False)
+        self._drop_card = card
+        if card is not None:
+            card.set_drop_active(True)
+
+    def dragEnterEvent(self, event):
+        # 至少一个有效媒体文件就先接受，落点合法性由 dragMove 逐位置裁决
+        if self._media_paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        card = None
+        if self._media_paths(event.mimeData()):
+            card = self._drop_card_at(event.position().toPoint())
+        self._set_drop_highlight(card)
+        if card is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._set_drop_highlight(None)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        self._set_drop_highlight(None)
+        card = self._drop_card_at(event.position().toPoint())
+        paths = self._media_paths(event.mimeData())
+        if card is not None and paths:
+            self.moveRequested.emit(paths, str(card.folder))
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def _visible_entries(self) -> list[MediaEntry]:
         items = self.entries
@@ -297,6 +623,7 @@ class ShelfPage(QWidget):
             card.deleteLater()
         self._ordered_cards.clear()
         self.cards.clear()
+        self._folder_cards.clear()
         while self.grid.count():
             item = self.grid.takeAt(0)
             widget = item.widget()
@@ -305,26 +632,42 @@ class ShelfPage(QWidget):
                 widget.setParent(None)
 
         visible = self._visible_entries()
-        self.countLabel.setText(f'{len(visible)} 项')
+        self._update_count()
         self._refresh_selection()
-        if not visible:
+
+        # 分批判定先做：媒体超过阈值就先藏容器再建卡，文件夹卡也不会闪一帧
+        deferred = len(visible) > BUILD_CHUNK
+        if deferred:
+            self.gridContainer.hide()
+            self.busy.show()
+            self.busy.raise_()
+            self._position_busy()
+
+        # 文件夹卡在前（资源管理器口径），量小同步建；位置由 _relayout 统一排
+        for folder in self.subdirs:
+            card = FolderCard(folder, self.gridContainer)
+            card.clicked.connect(lambda f=folder: self.navigate_to(f))
+            self._folder_cards.append(card)
+            self._ordered_cards.append(card)
+
+        if not visible and not self._folder_cards:
             self._pending_entries = []
             self.busy.hide()
             self._show_empty()
             return
         self.emptyLabel.hide()
 
-        if len(visible) <= BUILD_CHUNK:
+        if not visible:
+            # 只有文件夹（或文件夹 + 空筛选结果）：无需分批
+            self._finish_build()
+            return
+        if not deferred:
             self._create_batch(visible, 0)
             self._finish_build()
             return
         self._pending_entries = visible
         self._pending_pos = 0
         self._deferred_layout = True
-        self.gridContainer.hide()
-        self.busy.show()
-        self.busy.raise_()
-        self._position_busy()
         self._pump_build(self._build_token)
 
     def _pump_build(self, token: int) -> None:
@@ -342,8 +685,10 @@ class ShelfPage(QWidget):
 
     def _create_batch(self, entries: list[MediaEntry], start: int) -> None:
         cols = 1 if self._deferred_layout else self._cols()
+        # 文件夹卡占住前排格子：媒体的网格下标要从它们之后算
+        base = len(self._folder_cards)
         for offset, entry in enumerate(entries):
-            index = start + offset
+            index = start + offset + base
             card = ShelfCard(entry, self.gridContainer)
             card.clicked.connect(self._on_card_clicked)
             card.openRequested.connect(lambda e: self.openRequested.emit(str(e.path)))
@@ -433,6 +778,19 @@ class ShelfPage(QWidget):
                        (viewport.height() - self.busy.height()) // 2)
 
     def _show_empty(self) -> None:
+        # 空态文案按目录状态切换（FR-28）：真空 / 有文件但无可读媒体 / 还没打开过
+        if self._folder is not None:
+            try:
+                with os.scandir(self._folder) as iterator:
+                    has_any = next(iterator, None) is not None
+            except OSError:
+                has_any = False
+            self.emptyLabel.setText(
+                '此文件夹为空' if not has_any
+                else '此文件夹没有图片 / 音频 / 视频')
+        else:
+            self.emptyLabel.setText(
+                '打开文件后，同目录的图片 / 音频 / 视频会以卡片形式出现在这里')
         self._position_empty()
         self.emptyLabel.show()
         self.emptyLabel.raise_()
@@ -513,6 +871,9 @@ class ShelfPage(QWidget):
             return
         cfg.set(cfg.sortMode, mode)
         cfg.save()
+        # 资料库先按新序重排（D10，不依赖播放页 queueChanged）；
+        # 随后 _apply_sort 刷播放队列，同目录时 set_entries 会因 key 相同跳过
+        self.rescan()
         self.sortModeChanged.emit(mode)
 
     # ---------------- 选择 ----------------
@@ -537,17 +898,33 @@ class ShelfPage(QWidget):
         self.openRequested.emit(str(entry.path))
 
     # ---- 涂抹多选（按一维顺序的范围选择，支持反选）----
+    def _media_cards(self) -> list:
+        """布局列表里媒体卡的那一段：文件夹卡恒排在最前，永不进选区（D7）。"""
+        return self._ordered_cards[len(self._folder_cards):]
+
+    def _folder_card_at_viewport(self, viewport_pos: QPoint) -> FolderCard | None:
+        """视口坐标命中的文件夹卡（选择模式起笔与拖拽落点共用）。"""
+        if not self._folder_cards:
+            return None
+        container_pos = self.gridContainer.mapFrom(self.scroll.viewport(),
+                                                   viewport_pos)
+        for card in self._folder_cards:
+            if card.geometry().contains(container_pos):
+                return card
+        return None
+
     def index_at(self, viewport_pos: QPoint) -> int | None:
-        if not self._ordered_cards:
+        media = self._media_cards()
+        if not media:
             return None
         container_pos = self.gridContainer.mapFrom(self.scroll.viewport(), viewport_pos)
-        for index, card in enumerate(self._ordered_cards):
+        for index, card in enumerate(media):
             if card.geometry().contains(container_pos):
                 return index
         # 落在间隙/空白：取最近的卡片，拖过空白仍能确定起终点
         best_index = 0
         best_distance = None
-        for index, card in enumerate(self._ordered_cards):
+        for index, card in enumerate(media):
             rect = card.geometry()
             dx = max(rect.left() - container_pos.x(), 0, container_pos.x() - rect.right())
             dy = max(rect.top() - container_pos.y(), 0, container_pos.y() - rect.bottom())
@@ -566,7 +943,8 @@ class ShelfPage(QWidget):
         self._paint_anchor = index
         self._paint_last = None
         self._paint_base = set(self.selected)
-        self._paint_remove = self._ordered_cards[index].entry.path in self.selected
+        self._paint_remove = (self._media_cards()[index].entry.path
+                              in self.selected)
         self._apply_paint_range(index)
 
     def paint_to(self, viewport_pos: QPoint) -> None:
@@ -587,9 +965,11 @@ class ShelfPage(QWidget):
         """一维范围裁决：加选笔 = 笔前选区 ∪ 区间；取消笔 = 笔前选区 − 区间。
 
         区间随手指回拖收缩，落在区间外的卡片自动回到笔前状态（撤销本笔涂抹）。
+        区间只在媒体卡投影上取，文件夹卡不参与。
         """
         low, high = sorted((self._paint_anchor, current_index))
-        range_paths = {card.entry.path for card in self._ordered_cards[low:high + 1]}
+        media = self._media_cards()
+        range_paths = {card.entry.path for card in media[low:high + 1]}
         if self._paint_remove:
             self.selected = self._paint_base - range_paths
         else:
@@ -604,8 +984,8 @@ class ShelfPage(QWidget):
         self.paintBtn.setChecked(enabled)
         self.overlay.setGeometry(self.scroll.viewport().rect())
         self.overlay.setVisible(enabled)
-        for widget in (self.selLabel, self.selectAllBtn, self.deleteBtn,
-                       self.cancelSelectBtn):
+        for widget in (self.selLabel, self.selectAllBtn, self.moveBtn,
+                       self.deleteBtn, self.cancelSelectBtn):
             widget.setVisible(enabled)
         if enabled:
             self.overlay.raise_()
@@ -671,6 +1051,7 @@ class ShelfPage(QWidget):
         self.overlay.setGeometry(self.scroll.viewport().rect())
         self._position_empty()
         self._position_busy()
+        self._rebuild_crumbs()
         self._relayout()
 
     def eventFilter(self, obj, event):
@@ -679,4 +1060,6 @@ class ShelfPage(QWidget):
             self._position_empty()
             self._position_busy()
             self._relayout()
+        if obj is self._crumbsBox and event.type() == event.Type.Resize:
+            self._rebuild_crumbs()
         return super().eventFilter(obj, event)

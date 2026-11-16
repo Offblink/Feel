@@ -97,6 +97,36 @@ def scan_folder(folder: str | Path,
     return sort_entries(entries, sort_mode)
 
 
+def scan_subdirs(folder: str | Path,
+                 sort_mode: str = SORT_NAME) -> list[Path]:
+    """扫描一级子目录（跳过隐藏属性），按与媒体相同的排序模式排序（FR-27）。
+
+    只看一层不递归；隐藏口径与资源管理器默认一致（FILE_ATTRIBUTE_HIDDEN 跳过）。
+    """
+    folder = Path(folder)
+    found: list[tuple[Path, float, str]] = []
+    try:
+        with os.scandir(folder) as iterator:
+            for item in iterator:
+                try:
+                    if not item.is_dir():
+                        continue
+                    stat = item.stat()
+                except OSError:
+                    continue
+                if stat.st_file_attributes & 0x2:  # FILE_ATTRIBUTE_HIDDEN
+                    continue
+                found.append((Path(item.path), stat.st_mtime, item.name))
+    except OSError:
+        return []
+    if sort_mode in (SORT_TIME_DESC, SORT_TIME_ASC):
+        sign = -1.0 if sort_mode == SORT_TIME_DESC else 1.0
+        found.sort(key=lambda row: (sign * row[1], natural_key(row[2])))
+    else:
+        found.sort(key=lambda row: natural_key(row[2]))
+    return [row[0] for row in found]
+
+
 def scan_directory(file_path: str | Path,
                    sort_mode: str = SORT_NAME) -> tuple[list[MediaEntry], int]:
     """扫描 file_path 所在目录的可读文件，返回 (排序后列表, 当前文件下标)。

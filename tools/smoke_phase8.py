@@ -123,9 +123,13 @@ def main() -> int:
         window.registry.trigger('toggle_theme')
         QTest.qWait(500)
 
-    # ---- 空态：资料库清空 ----
+    # ---- 空态：导航进没有媒体的目录（D9：资料库目录只由显式导航改变，
+    # 播放队列的 set_entries 只做同目录同步，不再负责清空卡片墙）----
+    empty_dir = OUT / 'emptydir'
+    empty_dir.mkdir(exist_ok=True)
+    (empty_dir / 'note.txt').write_text('no media here')
     window.switchTo(window.shelfPage)
-    window.shelfPage.set_entries([])
+    window.shelfPage.navigate_to(empty_dir)
     QTest.qWait(150)
     assert not window.shelfPage.cards
     assert window.shelfPage.emptyLabel.isVisible()

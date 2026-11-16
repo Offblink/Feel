@@ -7,7 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from feel.scanner import natural_key, media_kind, scan_directory  # noqa: E402
+from feel.scanner import (  # noqa: E402
+    natural_key,
+    media_kind,
+    scan_directory,
+    scan_subdirs,
+)
 
 
 class ScannerTest(unittest.TestCase):
@@ -75,6 +80,32 @@ class ScannerTest(unittest.TestCase):
             entries, _ = scan_directory(root / 'img2.png', 'time_desc')
             self.assertEqual([e.path.name for e in entries],
                              ['img1.png', 'img2.png', 'img10.png'])
+
+    def test_scan_subdirs_skips_files_and_hidden(self):
+        if sys.platform != 'win32':
+            self.skipTest('FILE_ATTRIBUTE_HIDDEN 是 Windows 口径')
+        import ctypes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'sub10').mkdir()
+            (root / 'sub2').mkdir()
+            (root / 'file.png').write_bytes(b'x')
+            hidden = root / 'hidden_sub'
+            hidden.mkdir()
+            ctypes.windll.kernel32.SetFileAttributesW(str(hidden), 0x2)
+            self.addCleanup(ctypes.windll.kernel32.SetFileAttributesW,
+                            str(hidden), 0x80)
+
+            self.assertEqual([p.name for p in scan_subdirs(root)],
+                             ['sub2', 'sub10'])
+            # 与媒体同一套排序模式
+            os.utime(root / 'sub2', (100, 100))
+            os.utime(root / 'sub10', (200, 200))
+            self.assertEqual([p.name for p in scan_subdirs(root, 'time_desc')],
+                             ['sub10', 'sub2'])
+            self.assertEqual([p.name for p in scan_subdirs(root, 'time_asc')],
+                             ['sub2', 'sub10'])
 
 
 if __name__ == '__main__':

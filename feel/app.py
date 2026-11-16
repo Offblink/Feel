@@ -20,15 +20,25 @@ from .actions import Action, ActionRegistry, GLOBAL, PLAYER, SHELF, SETTINGS
 from .actions import display_sequence
 from .config import cfg
 from .filedel import move_to_recycle_bin
+from .filemove import move_files, relocate
 from .logs import logger
 from .ocr import OcrService
-from .scanner import MEDIA_FILTER, VIDEO, scan_directory, scan_folder, sort_entries
+from .scanner import (
+    MEDIA_FILTER,
+    VIDEO,
+    MediaEntry,
+    media_kind,
+    scan_directory,
+    scan_folder,
+    sort_entries,
+)
 from .store import Store
 from .ui.pages.player import PlayerPage
 from .ui.pages.help import HelpPage
 from .ui.pages.settings import SettingsPage
 from .ui.pages.shelf import ShelfPage
 from .ui.widgets.theme_transition import ThemeTransitionOverlay
+from .undoredo import Op, UndoStack
 
 PAGE_CONTEXT = {}
 log = logger()
@@ -79,6 +89,7 @@ class FeelWindow(FluentWindow):
 
         # 页面联动：播放页队列变化 -> 资料库刷新；资料库动作 -> 播放页/窗口
         self.store = Store()
+        self.undoStack = UndoStack(self)
         self.ocr = OcrService(self.store, self)
         self._ocr_signature = None
         self.ocr.textReady.connect(self.shelfPage.set_ocr_text)
@@ -97,6 +108,12 @@ class FeelWindow(FluentWindow):
         self.shelfPage.renameRequested.connect(self.rename_file)
         self.shelfPage.refreshRequested.connect(self.refresh_library)
         self.shelfPage.sortModeChanged.connect(self._apply_sort)
+        # 目录导航 / 移入 / 撤销重做（SPEC §11 FR-27~32）
+        self.shelfPage.folderChanged.connect(self._on_folder_changed)
+        self.shelfPage.moveRequested.connect(self.move_to_folder)
+        self.shelfPage.undoRequested.connect(self.undo_action)
+        self.shelfPage.redoRequested.connect(self.redo_action)
+        self.undoStack.changed.connect(self._on_undo_changed)
         cfg.ocrEnabled.valueChanged.connect(self.shelfPage.set_search_visible)
         self.shelfPage.set_search_visible(cfg.ocrEnabled.value)
 
@@ -276,6 +293,30 @@ class FeelWindow(FluentWindow):
             Action('rescan_ocr', '刷新', 'F5', FluentIcon.SYNC,
                    context=SHELF, handler=self.refresh_library)
         )
+        # 目录导航与撤销（SPEC §11）：返回/前进 = 历史栈，撤销/重做 = 路径对栈
+        r.register(
+            Action('nav_back', '返回', 'Alt+Left', FluentIcon.LEFT_ARROW,
+                   context=SHELF, handler=shelf.go_back,
+                   enabled_when=lambda: shelf.can_go_back())
+        )
+        r.register(
+            Action('nav_forward', '前进', 'Alt+Right', FluentIcon.RIGHT_ARROW,
+                   context=SHELF, handler=shelf.go_forward,
+                   enabled_when=lambda: shelf.can_go_forward())
+        )
+        r.register(
+            Action('move_selected', '移入', 'F7', context=SHELF,
+                   handler=shelf.move_selected,
+                   enabled_when=lambda: bool(shelf.selected))
+        )
+        r.register(
+            Action('undo', '撤销', 'Ctrl+Z', handler=self.undo_action,
+                   enabled_when=lambda: self.undoStack.can_undo())
+        )
+        r.register(
+            Action('redo', '重做', 'Ctrl+Y', handler=self.redo_action,
+                   enabled_when=lambda: self.undoStack.can_redo())
+        )
         r.register(
             Action('focus_search', '搜索图片文字', 'Ctrl+F', FluentIcon.SEARCH,
                    context=SHELF, handler=shelf.focus_search,
@@ -357,6 +398,11 @@ class FeelWindow(FluentWindow):
         r.bind_widget('delete_selected', self.shelfPage.deleteBtn)
         r.bind_widget('toggle_paint', self.shelfPage.paintBtn)
         r.bind_widget('rescan_ocr', self.shelfPage.refreshBtn)
+        r.bind_widget('nav_back', self.shelfPage.backBtn)
+        r.bind_widget('nav_forward', self.shelfPage.forwardBtn)
+        r.bind_widget('undo', self.shelfPage.undoBtn)
+        r.bind_widget('redo', self.shelfPage.redoBtn)
+        r.bind_widget('move_selected', self.shelfPage.moveBtn)
         r.bind_widget('focus_search', self.shelfPage.searchEdit,
                       tooltip='搜索图片文字（Ctrl+F）')
         r.bind_widget('toggle_theme', self.settingsPage.themeCard)
@@ -425,18 +471,19 @@ class FeelWindow(FluentWindow):
             self.open_path(path)
 
     def open_folder(self) -> None:
-        """资料库「打开文件夹」：只把目录装进队列与卡片墙，不跳页、不自动播放。"""
+        """资料库「打开文件夹」：导航进该目录（空目录也进，FR-27）；有媒体才装播放队列。"""
         from PySide6.QtWidgets import QFileDialog
 
         path = QFileDialog.getExistingDirectory(self, '打开文件夹', '')
         if not path:
             return
         folder = Path(path)
+        self.shelfPage.navigate_to(folder)
         entries = scan_folder(folder, cfg.sortMode.value)
         if not entries:
             log.warning('打开文件夹：%s 没有可读媒体', folder)
-            InfoBar.warning('无法打开', '该目录没有可读的图片 / 音频 / 视频',
-                            duration=3000, parent=self)
+            InfoBar.info('已打开文件夹', '该文件夹没有可读的图片 / 音频 / 视频',
+                         duration=2500, parent=self)
             return
         page = self.playerPage
         if page.has_media:
@@ -455,11 +502,12 @@ class FeelWindow(FluentWindow):
         )
 
     def open_path(self, path: str | Path) -> None:
-        """打开文件：播放页装载，并切换到播放页。
+        """打开文件：先让资料库导航到所在目录（FR-01/27），再播放页装载并切换。
 
         队列取资料库当前筛选结果（分类/扩展名/搜索 + 排序）；没有匹配时退回全目录。
         """
         log.info('打开文件 %s', path)
+        self.shelfPage.navigate_to(Path(path).parent)
         queue = self.shelfPage.queue_for(path)
         if queue is not None:
             log.info('播放队列 = 资料库筛选结果（%d 项）', len(queue))
@@ -486,6 +534,7 @@ class FeelWindow(FluentWindow):
             page.directory_entries = entries
             page.index = 0
             page._show_current()
+            self.shelfPage.navigate_to(path)
             page.queueChanged.emit()
             self.switchTo(page)
             log.info('命令行打开目录 %s（%d 个文件）', path, len(entries))
@@ -498,16 +547,32 @@ class FeelWindow(FluentWindow):
         page = self.playerPage
         directory = page.directory_entries or page.entries
         self.shelfPage.set_entries(directory)
-        images = [e.path for e in directory if e.kind == 'image']
-        if not images or not cfg.ocrEnabled.value:
+        if directory:
+            self._sync_ocr(Path(directory[0].path).parent, directory)
+
+    def _sync_ocr(self, folder: Path, entries, force: bool = False) -> None:
+        """静默 OCR（D11）：同目录 + 同图片集合只扫一次，force 供 F5 强制重跑。"""
+        if not cfg.ocrEnabled.value or not entries:
             return
-        # 同目录 + 同图片集合只扫一次，避免反复打开时取消在飞任务
-        folder = images[0].parent
+        images = [e.path for e in entries if e.kind == 'image']
+        if not images:
+            return
         signature = (str(folder), frozenset(str(p) for p in images))
-        if signature == self._ocr_signature:
+        if signature == self._ocr_signature and not force:
             return
         self._ocr_signature = signature
-        self.ocr.scan(images)
+        self.ocr.scan(images, force=force)
+
+    def _on_folder_changed(self, folder: str) -> None:
+        """资料库完成一次导航：记日志 + 新目录图片补 OCR（D11）。"""
+        log.info('资料库导航到 %s', folder)
+        self._sync_ocr(Path(folder), self.shelfPage.entries)
+
+    def _on_undo_changed(self) -> None:
+        """撤销栈变了：顶栏按钮态 + 动作 enabled_when 重算（Ctrl+Z/Y 可用性）。"""
+        self.shelfPage.undoBtn.setEnabled(self.undoStack.can_undo())
+        self.shelfPage.redoBtn.setEnabled(self.undoStack.can_redo())
+        self.registry.refresh_enabled()
 
     def toggle_favorite(self, path) -> bool:
         path = Path(path)
@@ -523,45 +588,67 @@ class FeelWindow(FluentWindow):
         return state
 
     def refresh_library(self) -> None:
-        """刷新：重新扫描当前目录（新增/改名/删除的文件立刻反映）+ 强制重跑 OCR。"""
-        page = self.playerPage
-        anchor = page.current_path
-        if anchor is None and self.shelfPage.entries:
-            anchor = self.shelfPage.entries[0].path
-        if anchor is None:
+        """F5：以资料库当前目录为准重扫（D10）+ 强制 OCR；播放队列同目录才同步。"""
+        shelf = self.shelfPage
+        folder = shelf.current_folder
+        if folder is None:
             InfoBar.warning('刷新', '还没有打开文件', duration=2500, parent=self)
             return
-        entries, _index = scan_directory(anchor, cfg.sortMode.value)
-        if not entries:
-            InfoBar.warning('刷新', '该目录没有可读的图片 / 音频 / 视频', duration=2500,
-                            parent=self)
-            return
+        shelf.rescan()
+        page = self.playerPage
+        player_dir = (page.directory_entries[0].path.parent
+                      if page.directory_entries else None)
+        same_dir = player_dir == folder
+        if same_dir:
+            self._set_player_directory(list(shelf.entries))
+        # 先占签名再发 queueChanged，_on_entries_changed 会因签名相同跳过，只扫一次
+        self._ocr_signature = None
+        self._sync_ocr(folder, shelf.entries, force=True)
+        if same_dir:
+            page.queueChanged.emit()
+        log.info('刷新资料库 %s：%d 个文件、%d 个文件夹',
+                 folder, len(shelf.entries), len(shelf.subdirs))
+        detail = f'{len(shelf.entries)} 个文件'
+        if shelf.subdirs:
+            detail += f' · {len(shelf.subdirs)} 个文件夹'
+        InfoBar.success('刷新', f'已重新扫描 {detail}', duration=1800, parent=self)
+
+    def _set_player_directory(self, entries) -> None:
+        """把一批目录条目装进播放队列：membership 保持、当前文件保持（D10）。
+
+        与刷新同一套语义：筛选队列只保留仍是成员的项；当前文件被外部挪走时
+        退回全目录并定位到相邻项。
+        """
+        page = self.playerPage
         current = page.current_path
         membership = {e.path for e in page.entries}
-        page.directory_entries = entries
+        page.directory_entries = list(entries)
         page.entries = ([e for e in entries if e.path in membership]
                         if membership else list(entries))
         if current is None:
             # 资料库「打开文件夹」只加载不出当前项：刷新后继续保持这种状态
             page.index = -1
+            return
+        index = next((i for i, e in enumerate(page.entries) if e.path == current), -1)
+        if index >= 0:
+            page.index = index
         else:
-            index = next((i for i, e in enumerate(page.entries) if e.path == current), -1)
-            if index >= 0:
-                page.index = index
-            else:
-                # 当前文件被外部删除/改名（或已不在筛选结果里）：退回全目录定位
-                page.entries = list(entries)
-                page.index = min(max(page.index, 0), len(entries) - 1)
-                page._show_current()
-        log.info('刷新资料库 %s：%d 个文件', entries[0].path.parent, len(entries))
-        self._ocr_signature = None
-        if cfg.ocrEnabled.value:
-            images = [e.path for e in entries if e.kind == 'image']
-            if images:
-                self.ocr.scan(images, force=True)
+            # 当前文件被外部删除/改名/移走（或已不在筛选结果里）：退回全目录定位
+            page.entries = list(entries)
+            page.index = min(max(page.index, 0), len(entries) - 1)
+            page._show_current()
+
+    def _resync_player_dir(self) -> None:
+        """重扫播放队列目录并套用 _set_player_directory（移动/撤销后调用）。"""
+        page = self.playerPage
+        anchor = page.current_path
+        if anchor is None and page.directory_entries:
+            anchor = page.directory_entries[0].path
+        if anchor is None:
+            return
+        entries, _index = scan_directory(anchor, cfg.sortMode.value)
+        self._set_player_directory(entries)
         page.queueChanged.emit()
-        InfoBar.success('刷新', f'已重新扫描 {len(entries)} 个文件', duration=1800,
-                        parent=self)
 
     def _apply_sort(self, _mode: str | None = None) -> None:
         """排序变更：资料库与播放队列共用同一顺序，当前文件保持不变。"""
@@ -628,8 +715,12 @@ class FeelWindow(FluentWindow):
         log.info('删除到回收站：%d 个（%s）', len(deleted),
                  '、'.join(p.name for p in list(deleted)[:5]))
         if deleted:
+            # 先按归属重扫资料库（D10）：随后 remove_paths 的 queueChanged
+            # 同目录同集合会因 key 相同跳过，整轮只重建一次卡片墙
+            shelf_dir = self.shelfPage.current_folder
+            if shelf_dir is not None and shelf_dir in {p.parent for p in deleted}:
+                self.shelfPage.rescan()
             page.remove_paths(deleted)
-            self.shelfPage.set_entries(page.directory_entries)
         if failed:
             log.warning('删除失败：%s', '；'.join(f'{p}: {e}' for p, e in failed))
             InfoBar.error(
@@ -639,6 +730,135 @@ class FeelWindow(FluentWindow):
                 parent=self,
             )
         return bool(deleted) and not failed
+
+    def move_to_folder(self, paths, target) -> bool:
+        """移入 / 拖拽移入（FR-31/32）：移动进 target 文件夹，成功入撤销栈。"""
+        target_dir = Path(target)
+        paths = [Path(p) for p in paths]
+        if not paths or not target_dir.is_dir():
+            return False
+        page = self.playerPage
+        current = page.current_path
+        if current in paths and page.has_media:
+            page.engine.release()
+        moved, failed = move_files(paths, target_dir)
+        for src, dst in moved:
+            self.store.rename_path(src, dst)
+        if moved:
+            self.undoStack.push(Op('移入', moved))
+            self._retarget_queue_paths(moved)
+            self._after_path_changes([p for pair in moved for p in pair])
+            message = f'{len(moved)} 个文件 → {target_dir.name}'
+            if failed:
+                message += f'（跳过 {len(failed)} 个）'
+            InfoBar.success('已移入', message, duration=1800, parent=self)
+            log.info('移入 %s：%d 个文件（%s）', target_dir, len(moved),
+                     '、'.join(p.name for p, _ in moved[:5]))
+        elif failed:
+            InfoBar.warning('移入失败',
+                            '；'.join(f'{p.name}: {e}' for p, e in failed[:3]),
+                            duration=3500, parent=self)
+        return bool(moved)
+
+    def undo_action(self) -> None:
+        op = self.undoStack.undo()
+        if op is None:
+            return
+        if not self._apply_op(op, reverse=True):
+            self.undoStack.drop_from_redo(op)
+
+    def redo_action(self) -> None:
+        op = self.undoStack.redo()
+        if op is None:
+            return
+        if not self._apply_op(op, reverse=False):
+            self.undoStack.drop_from_undo(op)
+
+    def _apply_op(self, op: Op, reverse: bool) -> bool:
+        """撤销/重做一批路径对：搬运 + Store 迁移 + 按归属刷新（FR-30）。
+
+        返回 False = 有条目搬运失败，调用方丢弃这条（栈与磁盘保持一致）。
+        """
+        pairs = [(dst, src) for src, dst in op.pairs] if reverse else list(op.pairs)
+        page = self.playerPage
+        current = page.current_path
+        reload_path = None
+        for src, dst in pairs:
+            if src == current:
+                if page.has_media:
+                    page.engine.release()
+                reload_path = dst
+                break
+        done: list[tuple[Path, Path]] = []
+        errors: list[str] = []
+        for src, dst in pairs:
+            try:
+                relocate(src, dst)
+            except OSError as error:
+                errors.append(f'{src.name}: {error}')
+                log.warning('撤销/重做失败 %s -> %s（%s）', src, dst, error)
+                continue
+            self.store.rename_path(src, dst)
+            done.append((src, dst))
+        if done:
+            self._retarget_queue_paths(done)
+            self._after_path_changes([p for pair in done for p in pair])
+        if reload_path is not None:
+            # 当前播放文件被搬走/搬回：按落点重装（落点没了就退回原地）
+            target = reload_path if reload_path.exists() else (
+                current if current.exists() else None)
+            if target is not None:
+                page.open_path(target, queue=self.shelfPage.queue_for(target))
+            else:
+                page._clear_stage()
+        verb = '已撤销' if reverse else '已重做'
+        if errors:
+            InfoBar.error(f'{verb}（部分失败）', '；'.join(errors[:3]),
+                          duration=4000, parent=self)
+            log.warning('%s %s：%d 成功 / %d 失败', verb, op.label,
+                        len(done), len(errors))
+            return False
+        if done:
+            InfoBar.info(verb, f'{op.label} · {len(done)} 个文件', duration=1500,
+                         parent=self)
+            log.info('%s %s：%d 个文件', verb, op.label, len(done))
+        return True
+
+    def _after_path_changes(self, changed) -> None:
+        """删除/移动/撤销后按归属刷新（D10）：资料库与播放队列各管各的目录。"""
+        parents = {Path(p).parent for p in changed}
+        shelf_dir = self.shelfPage.current_folder
+        if shelf_dir is not None and shelf_dir in parents:
+            self.shelfPage.rescan()
+        page = self.playerPage
+        player_dir = (page.directory_entries[0].path.parent
+                      if page.directory_entries else None)
+        if player_dir is not None and player_dir in parents:
+            self._resync_player_dir()
+
+    def _retarget_queue_paths(self, pairs) -> None:
+        """移动/撤销重做后同步播放队列 membership（在 _after_path_changes 之前调）。
+
+        - 旧路径换新路径：撤销重命名后队列不残留旧名（否则交集过滤会把文件挤出队列）；
+        - 新落进播放目录的文件补进 membership：拖入/移入当前目录后 prev/next 能看到它。
+        """
+        page = self.playerPage
+        mapping = dict(pairs)
+        if any(entry.path in mapping for entry in page.entries):
+            page.entries = [MediaEntry(mapping.get(e.path, e.path),
+                                       e.kind, e.mtime)
+                            for e in page.entries]
+        player_dir = (page.directory_entries[0].path.parent
+                      if page.directory_entries else None)
+        if player_dir is None:
+            return
+        known = {e.path for e in page.entries}
+        for _src, dst in pairs:
+            kind = media_kind(dst)
+            if kind is None or dst.parent != player_dir or dst in known:
+                continue
+            known.add(dst)
+            page.entries.append(MediaEntry(dst, kind, 0.0))
 
     def rename_file(self, entry, new_stem: str) -> bool:
         path = Path(entry.path)
@@ -652,6 +872,8 @@ class FeelWindow(FluentWindow):
             return False
         page = self.playerPage
         current = page.current_path
+        player_dir = (page.directory_entries[0].path.parent
+                      if page.directory_entries else None)
         membership = {e.path for e in page.entries}
         if path in membership:
             membership.discard(path)
@@ -670,6 +892,14 @@ class FeelWindow(FluentWindow):
             return False
         self.store.rename_path(path, new_path)
         log.info('重命名 %s -> %s', path.name, new_path.name)
+        self.undoStack.push(Op('重命名', [(path, new_path)]))
+        if path.parent != player_dir:
+            # 改名的文件不在播放队列目录：只刷资料库。旧逻辑拿 new_path 当 anchor
+            # 去扫目录，会把播放队列改锚到资料库目录并把 membership 交集成空集（D9/11.3）
+            shelf_dir = self.shelfPage.current_folder
+            if shelf_dir is not None and shelf_dir == path.parent:
+                self.shelfPage.rescan()
+            return True
         anchor = new_path if current == path else (current or new_path)
         entries, _index = scan_directory(anchor, cfg.sortMode.value)
         if not entries:
